@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GCA Chat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --navy:#060E1F;
+    --navy-2:#0C1A38;
+    --navy-3:#132345;
+    --blue-1:#1349A0;
+    --blue-2:#2B8AE8;
+    --ink:#0B1730;
+    --muted:#6B7688;
+    --line:#E3E7EF;
+    --bg:#F5F7FB;
+    --online:#3FBE7A;
+    --away:#E8A93A;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'DM Sans',sans-serif;color:var(--ink);}
+  #app{display:flex;height:100vh;width:100vw;overflow:hidden;}
+
+  /* Sidebar */
+  #sidebar{
+    width:280px;flex-shrink:0;
+    background:var(--navy);
+    color:#fff;
+    display:flex;flex-direction:column;
+  }
+  .side-header{
+    padding:20px 18px 14px;
+    display:flex;align-items:center;gap:10px;
+    border-bottom:1px solid #16234A;
+  }
+  .side-header .mark{
+    width:32px;height:32px;border-radius:8px;
+    background:linear-gradient(135deg,var(--blue-2),var(--blue-1));
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Outfit',sans-serif;font-weight:700;font-size:14px;
+  }
+  .side-header .name{font-family:'Outfit',sans-serif;font-weight:600;font-size:15px;}
+  .side-scroll{flex:1;overflow-y:auto;padding:14px 10px;}
+  .side-section{
+    font-size:11px;font-weight:600;letter-spacing:.5px;
+    color:#5C6A8C;text-transform:uppercase;
+    padding:14px 10px 6px;
+  }
+  .side-item{
+    display:flex;align-items:center;gap:10px;
+    padding:8px 10px;border-radius:8px;
+    cursor:pointer;color:#C4CCE0;font-size:13.5px;
+    transition:background .12s;
+  }
+  .side-item:hover{background:#101D3E;}
+  .side-item.active{background:var(--navy-3);color:#fff;font-weight:500;}
+  .hash{color:#5C6A8C;font-size:14px;width:14px;text-align:center;}
+  .dm-dot{width:8px;height:8px;border-radius:50%;background:#4A5578;flex-shrink:0;}
+  .dm-dot.online{background:var(--online);}
+  .unread-pill{
+    margin-left:auto;background:var(--blue-2);color:#fff;
+    font-size:10.5px;font-weight:600;border-radius:9px;
+    padding:1px 6px;min-width:16px;text-align:center;
+  }
+  .side-footer{
+    padding:12px 16px;border-top:1px solid #16234A;
+    display:flex;align-items:center;gap:10px;
+  }
+  .avatar{
+    width:30px;height:30px;border-radius:50%;
+    background:linear-gradient(135deg,var(--blue-2),var(--blue-1));
+    display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:600;color:#fff;flex-shrink:0;
+  }
+  .me-name{font-size:13px;font-weight:500;color:#fff;}
+  .me-status{font-size:11px;color:var(--online);}
+  .logout-btn{
+    margin-left:auto;background:none;border:none;color:#5C6A8C;
+    cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;
+  }
+
+  /* Main thread */
+  #main{flex:1;display:flex;flex-direction:column;background:var(--bg);min-width:0;}
+  #thread-header{
+    padding:16px 24px;background:#fff;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:10px;
+  }
+  #thread-title{font-family:'Outfit',sans-serif;font-weight:600;font-size:16px;}
+  #thread-sub{font-size:12.5px;color:var(--muted);}
+  #messages{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:2px;}
+  .msg-row{display:flex;gap:12px;padding:8px 4px;border-radius:8px;}
+  .msg-row:hover{background:#EEF1F7;}
+  .msg-avatar{
+    width:34px;height:34px;border-radius:50%;flex-shrink:0;
+    background:linear-gradient(135deg,var(--blue-2),var(--blue-1));
+    display:flex;align-items:center;justify-content:center;
+    font-size:12.5px;font-weight:600;color:#fff;
+  }
+  .msg-body-wrap{min-width:0;}
+  .msg-meta{display:flex;align-items:baseline;gap:8px;}
+  .msg-sender{font-weight:600;font-size:13.5px;}
+  .msg-time{font-size:11px;color:var(--muted);}
+  .msg-text{font-size:14px;line-height:1.55;color:var(--ink);margin-top:1px;word-break:break-word;}
+  .msg-text a.case-link{
+    color:var(--blue-1);font-weight:600;text-decoration:none;
+    border-bottom:1px dashed var(--blue-2);
+  }
+  #empty-state{
+    flex:1;display:flex;align-items:center;justify-content:center;
+    color:var(--muted);font-size:13.5px;text-align:center;padding:40px;
+  }
+  #composer{
+    padding:16px 24px 20px;background:#fff;border-top:1px solid var(--line);
+  }
+  #composer-inner{
+    display:flex;align-items:flex-end;gap:10px;
+    border:1px solid var(--line);border-radius:12px;
+    padding:8px 10px;background:#FAFBFD;
+  }
+  #msgInput{
+    flex:1;border:none;background:transparent;outline:none;
+    resize:none;font-family:'DM Sans',sans-serif;font-size:14px;
+    max-height:120px;padding:6px 4px;line-height:1.5;
+  }
+  #sendBtn{
+    background:linear-gradient(135deg,var(--blue-2),var(--blue-1));
+    border:none;color:#fff;border-radius:8px;
+    width:34px;height:34px;flex-shrink:0;cursor:pointer;
+    font-size:15px;display:flex;align-items:center;justify-content:center;
+  }
+  #sendBtn:disabled{opacity:.5;cursor:default;}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="sidebar">
+    <div class="side-header">
+      <div class="mark">G</div>
+      <div class="name">GCA Chat</div>
+    </div>
+    <div class="side-scroll">
+      <div class="side-section">Channels</div>
+      <div id="channelList"></div>
+      <div class="side-section">Direct messages</div>
+      <div id="dmList"></div>
+      <div id="adminLinkWrap" style="display:none;">
+        <div class="side-section">Admin</div>
+        <div class="side-item" onclick="window.location.href='chat-admin.html'">
+          <span class="hash">&#9881;</span><span>Manage agents</span>
+        </div>
+      </div>
+    </div>
+    <div class="side-footer">
+      <div class="avatar" id="meAvatar">--</div>
+      <div>
+        <div class="me-name" id="meName">Loading…</div>
+        <div class="me-status">Online</div>
+      </div>
+      <button class="logout-btn" id="logoutBtn">Sign out</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="thread-header">
+      <div>
+        <div id="thread-title">Select a channel</div>
+        <div id="thread-sub"></div>
+      </div>
+    </div>
+    <div id="messages"></div>
+    <div id="empty-state" style="display:none;">Pick a channel or DM on the left to start chatting.</div>
+    <div id="composer">
+      <div id="composer-inner">
+        <textarea id="msgInput" rows="1" placeholder="Message…" disabled></textarea>
+        <button id="sendBtn" disabled>&#8593;</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- Fill these in with YOUR chat app's own Supabase project ----
+const SUPABASE_URL = 'https://cuaayxiqpxgsrymqfnnr.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN1YWF5eGlxcHhnc3J5bXFmbm5yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NDUzMjgsImV4cCI6MjEwMjAyMTMyOH0.bX3JGwzqJt78ru_7wUYdhwRUOnhFExoY_gFXTgo24Y8';
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let me = null;              // current profile row
+let allProfiles = [];       // every agent's profile
+let channels = [];          // channels I'm a member of (is_dm = false)
+let dms = [];                // DM channels I'm a member of
+let activeChannelId = null;
+let messageSub = null;
+
+const channelListEl = document.getElementById('channelList');
+const dmListEl = document.getElementById('dmList');
+const messagesEl = document.getElementById('messages');
+const emptyStateEl = document.getElementById('empty-state');
+const threadTitleEl = document.getElementById('thread-title');
+const threadSubEl = document.getElementById('thread-sub');
+const msgInput = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+
+function initials(first, last){
+  return ((first||'?')[0] + (last||'?')[0]).toUpperCase();
+}
+
+async function init(){
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session){ window.location.href = 'chat-login.html'; return; }
+
+  const { data: profile } = await supabaseClient
+    .from('profiles').select('*').eq('id', session.user.id).single();
+  if (!profile){ window.location.href = 'chat-login.html'; return; }
+  me = profile;
+
+  document.getElementById('meName').textContent = me.first_name + ' ' + me.last_name;
+  document.getElementById('meAvatar').textContent = initials(me.first_name, me.last_name);
+  if (me.role === 'admin'){
+    document.getElementById('adminLinkWrap').style.display = 'block';
+  }
+
+  await ensureGeneralChannel();
+
+  const { data: allP } = await supabaseClient.from('profiles').select('*');
+  allProfiles = allP || [];
+
+  await loadMyChannels();
+  renderSidebar();
+  subscribeToPresenceAndMembership();
+}
+
+// Auto-join every agent to a shared "General" channel on first login.
+async function ensureGeneralChannel(){
+  let { data: gen } = await supabaseClient
+    .from('channels').select('*').eq('name', 'General').eq('is_dm', false).maybeSingle();
+
+  if (!gen){
+    const { data: created } = await supabaseClient
+      .from('channels')
+      .insert({ name: 'General', description: 'Whole-team channel', is_dm: false, created_by: me?.id })
+      .select().single();
+    gen = created;
+  }
+  if (gen){
+    await supabaseClient
+      .from('channel_members')
+      .upsert({ channel_id: gen.id, profile_id: (await supabaseClient.auth.getUser()).data.user.id }, { onConflict: 'channel_id,profile_id' });
+  }
+}
+
+async function loadMyChannels(){
+  const { data: memberships } = await supabaseClient
+    .from('channel_members').select('channel_id').eq('profile_id', me.id);
+  const ids = (memberships || []).map(m => m.channel_id);
+  if (ids.length === 0) return;
+
+  const { data: chans } = await supabaseClient
+    .from('channels').select('*').in('id', ids);
+
+  channels = (chans || []).filter(c => !c.is_dm);
+  dms = (chans || []).filter(c => c.is_dm);
+}
+
+function renderSidebar(){
+  channelListEl.innerHTML = '';
+  channels.forEach(c => {
+    const div = document.createElement('div');
+    div.className = 'side-item' + (c.id === activeChannelId ? ' active' : '');
+    div.innerHTML = '<span class="hash">#</span><span>' + c.name + '</span>';
+    div.onclick = () => openChannel(c);
+    channelListEl.appendChild(div);
+  });
+
+  dmListEl.innerHTML = '';
+  const others = allProfiles.filter(p => p.id !== me.id);
+  others.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'side-item';
+    const online = p.status === 'online';
+    div.innerHTML =
+      '<span class="dm-dot' + (online ? ' online' : '') + '"></span>' +
+      '<span>' + p.first_name + ' ' + p.last_name + '</span>';
+    div.onclick = () => openOrCreateDM(p);
+    dmListEl.appendChild(div);
+  });
+}
+
+async function openChannel(channel){
+  activeChannelId = channel.id;
+  threadTitleEl.textContent = '# ' + channel.name;
+  threadSubEl.textContent = channel.description || '';
+  emptyStateEl.style.display = 'none';
+  msgInput.disabled = false;
+  sendBtn.disabled = false;
+  renderSidebar();
+  await loadMessages(channel.id);
+  listenForNewMessages(channel.id);
+}
+
+async function openOrCreateDM(otherProfile){
+  const { data: myDms } = await supabaseClient
+    .from('channel_members').select('channel_id').eq('profile_id', me.id);
+  const myDmIds = (myDms || []).map(m => m.channel_id);
+
+  const { data: theirDms } = await supabaseClient
+    .from('channel_members').select('channel_id').eq('profile_id', otherProfile.id);
+  const theirDmIds = (theirDms || []).map(m => m.channel_id);
+
+  const shared = myDmIds.filter(id => theirDmIds.includes(id));
+  let dmChannel = null;
+  if (shared.length){
+    const { data: existing } = await supabaseClient
+      .from('channels').select('*').in('id', shared).eq('is_dm', true).maybeSingle();
+    dmChannel = existing;
+  }
+
+  if (!dmChannel){
+    const { data: created } = await supabaseClient
+      .from('channels')
+      .insert({ name: otherProfile.first_name, is_dm: true, created_by: me.id })
+      .select().single();
+    dmChannel = created;
+    await supabaseClient.from('channel_members').insert([
+      { channel_id: dmChannel.id, profile_id: me.id },
+      { channel_id: dmChannel.id, profile_id: otherProfile.id }
+    ]);
+    dms.push(dmChannel);
+  }
+
+  activeChannelId = dmChannel.id;
+  threadTitleEl.textContent = otherProfile.first_name + ' ' + otherProfile.last_name;
+  threadSubEl.textContent = otherProfile.status === 'online' ? 'Online' : 'Offline';
+  emptyStateEl.style.display = 'none';
+  msgInput.disabled = false;
+  sendBtn.disabled = false;
+  await loadMessages(dmChannel.id);
+  listenForNewMessages(dmChannel.id);
+}
+
+async function loadMessages(channelId){
+  messagesEl.innerHTML = '';
+  const { data: msgs } = await supabaseClient
+    .from('messages').select('*').eq('channel_id', channelId)
+    .order('created_at', { ascending: true }).limit(200);
+  (msgs || []).forEach(renderMessage);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function renderMessage(msg){
+  const sender = allProfiles.find(p => p.id === msg.sender_id) || me;
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const escaped = msg.body
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const linked = escaped.replace(/#([A-Za-z0-9\-]+)/g, '<a class="case-link" href="#">#$1</a>');
+  row.innerHTML =
+    '<div class="msg-avatar">' + initials(sender.first_name, sender.last_name) + '</div>' +
+    '<div class="msg-body-wrap">' +
+      '<div class="msg-meta"><span class="msg-sender">' + sender.first_name + ' ' + sender.last_name + '</span>' +
+      '<span class="msg-time">' + time + '</span></div>' +
+      '<div class="msg-text">' + linked + '</div>' +
+    '</div>';
+  messagesEl.appendChild(row);
+}
+
+function listenForNewMessages(channelId){
+  if (messageSub) supabaseClient.removeChannel(messageSub);
+  messageSub = supabaseClient
+    .channel('room-' + channelId)
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: 'channel_id=eq.' + channelId },
+      payload => {
+        renderMessage(payload.new);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      })
+    .subscribe();
+}
+
+function subscribeToPresenceAndMembership(){
+  supabaseClient
+    .channel('profiles-presence')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, payload => {
+      const idx = allProfiles.findIndex(p => p.id === payload.new.id);
+      if (idx > -1) allProfiles[idx] = payload.new;
+      renderSidebar();
+    })
+    .subscribe();
+}
+
+async function sendMessage(){
+  const text = msgInput.value.trim();
+  if (!text || !activeChannelId) return;
+  msgInput.value = '';
+  msgInput.style.height = 'auto';
+  await supabaseClient.from('messages').insert({
+    channel_id: activeChannelId,
+    sender_id: me.id,
+    body: text
+  });
+}
+
+msgInput.addEventListener('input', () => {
+  msgInput.style.height = 'auto';
+  msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+});
+msgInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey){
+    e.preventDefault();
+    sendMessage();
+  }
+});
+sendBtn.addEventListener('click', sendMessage);
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  if (me){
+    await supabaseClient.from('profiles').update({ status: 'offline' }).eq('id', me.id);
+  }
+  await supabaseClient.auth.signOut();
+  window.location.href = 'chat-login.html';
+});
+
+window.addEventListener('beforeunload', () => {
+  if (me) navigator.sendBeacon
+    ? null
+    : supabaseClient.from('profiles').update({ status: 'offline' }).eq('id', me.id);
+});
+
+init();
+</script>
+</body>
+</html>

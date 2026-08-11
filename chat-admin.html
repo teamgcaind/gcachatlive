@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GCA Chat — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --navy:#060E1F;--blue-1:#1349A0;--blue-2:#2B8AE8;
+    --ink:#0B1730;--muted:#6B7688;--line:#E3E7EF;--bg:#F5F7FB;
+    --danger:#D64545;--online:#3FBE7A;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'DM Sans',sans-serif;color:var(--ink);background:var(--bg);}
+  #topbar{
+    background:var(--navy);color:#fff;padding:16px 28px;
+    display:flex;align-items:center;gap:12px;
+  }
+  #topbar .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--blue-2),var(--blue-1));display:flex;align-items:center;justify-content:center;font-family:'Outfit',sans-serif;font-weight:700;font-size:13px;}
+  #topbar .title{font-family:'Outfit',sans-serif;font-weight:600;font-size:15px;}
+  #topbar a{margin-left:auto;color:#93A0BD;font-size:13px;text-decoration:none;}
+  #wrap{max-width:760px;margin:0 auto;padding:36px 24px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:26px;margin-bottom:24px;}
+  .card h2{font-family:'Outfit',sans-serif;font-weight:600;font-size:17px;margin-bottom:4px;}
+  .card .hint{color:var(--muted);font-size:13px;margin-bottom:20px;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  label{display:block;font-size:12.5px;font-weight:600;margin-bottom:6px;}
+  input,select{
+    width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9px;
+    font-family:'DM Sans',sans-serif;font-size:14px;background:#FAFBFD;outline:none;
+  }
+  input:focus,select:focus{border-color:var(--blue-2);background:#fff;}
+  .full{grid-column:1 / -1;}
+  .pw-wrap{position:relative;}
+  .pw-toggle{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;}
+  button.submit{
+    margin-top:18px;padding:12px 20px;border:none;border-radius:9px;
+    background:linear-gradient(135deg,var(--blue-2),var(--blue-1));color:#fff;
+    font-family:'DM Sans',sans-serif;font-weight:600;font-size:14px;cursor:pointer;
+  }
+  button.submit:disabled{opacity:.6;cursor:default;}
+  .msg{margin-top:14px;padding:11px 13px;border-radius:8px;font-size:13px;display:none;}
+  .msg.ok{background:#E9F7EF;color:#1D7A44;border:1px solid #A9E0BE;display:block;}
+  .msg.err{background:#FDEDED;color:var(--danger);border:1px solid #F5C6C6;display:block;}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;border-bottom:1px solid var(--line);}
+  td{padding:10px;border-bottom:1px solid #F0F2F6;}
+  .role-pill{font-size:11px;font-weight:600;padding:2px 8px;border-radius:8px;}
+  .role-pill.admin{background:#EEEDFE;color:#3C3489;}
+  .role-pill.agent{background:#E6F1FB;color:#0C447C;}
+  .status-dot{width:7px;height:7px;border-radius:50%;background:#C4CCE0;display:inline-block;margin-right:6px;}
+  .status-dot.online{background:var(--online);}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <div class="mark">G</div>
+  <div class="title">GCA Chat — Admin</div>
+  <a href="chat-app.html">Back to chat</a>
+</div>
+
+<div id="wrap">
+  <div class="card">
+    <h2>Create agent login</h2>
+    <p class="hint">This creates a real login the agent can use immediately — no need to touch Supabase.</p>
+    <form id="createForm">
+      <div class="grid">
+        <div>
+          <label>First name</label>
+          <input type="text" id="firstName" required>
+        </div>
+        <div>
+          <label>Last name</label>
+          <input type="text" id="lastName" required>
+        </div>
+        <div>
+          <label>Username</label>
+          <input type="text" id="username" placeholder="e.g. rohit.d" required>
+        </div>
+        <div>
+          <label>Role</label>
+          <select id="role">
+            <option value="agent">Agent</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="full">
+          <label>Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="password" required>
+            <button type="button" class="pw-toggle" id="pwToggle">Show</button>
+          </div>
+        </div>
+      </div>
+      <button type="submit" class="submit" id="submitBtn">Create login</button>
+      <div class="msg" id="msgBox"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Existing agents</h2>
+    <p class="hint">Everyone who currently has a login.</p>
+    <table>
+      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th></tr></thead>
+      <tbody id="agentTable"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ---- Fill these in with YOUR chat app's own Supabase project ----
+const SUPABASE_URL = 'YOUR_CHAT_SUPABASE_URL';
+const SUPABASE_ANON_KEY = 'YOUR_CHAT_SUPABASE_ANON_KEY';
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const pwInput = document.getElementById('password');
+document.getElementById('pwToggle').addEventListener('click', function(){
+  const isPw = pwInput.type === 'password';
+  pwInput.type = isPw ? 'text' : 'password';
+  this.textContent = isPw ? 'Hide' : 'Show';
+});
+
+async function guardAdmin(){
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session){ window.location.href = 'chat-login.html'; return null; }
+  const { data: profile } = await supabaseClient
+    .from('profiles').select('*').eq('id', session.user.id).single();
+  if (!profile || profile.role !== 'admin'){
+    alert('Admin access only.');
+    window.location.href = 'chat-app.html';
+    return null;
+  }
+  return session;
+}
+
+async function loadAgents(){
+  const { data: agents } = await supabaseClient.from('profiles').select('*').order('first_name');
+  const tbody = document.getElementById('agentTable');
+  tbody.innerHTML = (agents || []).map(a => `
+    <tr>
+      <td>${a.first_name} ${a.last_name}</td>
+      <td>${a.username}</td>
+      <td><span class="role-pill ${a.role}">${a.role}</span></td>
+      <td><span class="status-dot ${a.status === 'online' ? 'online' : ''}"></span>${a.status}</td>
+    </tr>`).join('');
+}
+
+const form = document.getElementById('createForm');
+const msgBox = document.getElementById('msgBox');
+const submitBtn = document.getElementById('submitBtn');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  msgBox.className = 'msg';
+  msgBox.style.display = 'none';
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Creating…';
+
+  const { data: { session } } = await supabaseClient.auth.getSession();
+
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/create-agent', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      },
+      body: JSON.stringify({
+        first_name: document.getElementById('firstName').value.trim(),
+        last_name: document.getElementById('lastName').value.trim(),
+        username: document.getElementById('username').value.trim(),
+        password: pwInput.value,
+        role: document.getElementById('role').value
+      })
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || 'Something went wrong');
+
+    msgBox.textContent = 'Login created — share the username and password with the agent.';
+    msgBox.className = 'msg ok';
+    form.reset();
+    loadAgents();
+  } catch (err) {
+    msgBox.textContent = err.message;
+    msgBox.className = 'msg err';
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Create login';
+  }
+});
+
+(async () => {
+  const session = await guardAdmin();
+  if (session) loadAgents();
+})();
+</script>
+</body>
+</html>
