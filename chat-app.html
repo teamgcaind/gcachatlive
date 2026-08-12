@@ -19,6 +19,7 @@
     --line:#E3E7EF;
     --bg:#F5F7FB;
     --online:#3FBE7A;
+    --offline:#D64545;
     --away:#E8A93A;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
@@ -59,7 +60,7 @@
   .side-item:hover{background:#101D3E;}
   .side-item.active{background:var(--navy-3);color:#fff;font-weight:500;}
   .hash{color:#5C6A8C;font-size:14px;width:14px;text-align:center;}
-  .dm-dot{width:8px;height:8px;border-radius:50%;background:#4A5578;flex-shrink:0;}
+  .dm-dot{width:8px;height:8px;border-radius:50%;background:var(--offline);flex-shrink:0;}
   .dm-dot.online{background:var(--online);}
   .unread-pill{
     margin-left:auto;background:var(--blue-2);color:#fff;
@@ -90,7 +91,23 @@
     display:flex;align-items:center;gap:10px;
   }
   #thread-title{font-family:'Outfit',sans-serif;font-weight:600;font-size:16px;}
+  #thread-sub-row{display:flex;align-items:center;gap:6px;margin-top:1px;}
   #thread-sub{font-size:12.5px;color:var(--muted);}
+  .typing-indicator{
+    display:none;align-items:center;gap:6px;
+    padding:4px 24px 0;font-size:12px;color:var(--muted);
+  }
+  .typing-dots{display:inline-flex;gap:3px;}
+  .typing-dots span{
+    width:5px;height:5px;border-radius:50%;background:var(--muted);
+    animation:typingBounce 1.2s infinite ease-in-out;
+  }
+  .typing-dots span:nth-child(2){animation-delay:.2s;}
+  .typing-dots span:nth-child(3){animation-delay:.4s;}
+  @keyframes typingBounce{
+    0%,60%,100%{transform:translateY(0);opacity:.5;}
+    30%{transform:translateY(-4px);opacity:1;}
+  }
   #messages{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:2px;}
   .msg-row{display:flex;gap:12px;padding:8px 4px;border-radius:8px;}
   .msg-row:hover{background:#EEF1F7;}
@@ -109,13 +126,36 @@
     color:var(--blue-1);font-weight:600;text-decoration:none;
     border-bottom:1px dashed var(--blue-2);
   }
+  .mention-highlight{
+    color:var(--blue-1);font-weight:600;background:#EAF2FC;
+    border-radius:4px;padding:0 3px;
+  }
   #empty-state{
     flex:1;display:flex;align-items:center;justify-content:center;
     color:var(--muted);font-size:13.5px;text-align:center;padding:40px;
   }
   #composer{
     padding:16px 24px 20px;background:#fff;border-top:1px solid var(--line);
+    position:relative;
   }
+  .mention-dropdown{
+    display:none;position:absolute;bottom:74px;left:24px;
+    background:#fff;border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 8px 24px rgba(11,23,48,.14);
+    max-height:190px;overflow-y:auto;width:230px;z-index:20;
+  }
+  .mention-item{
+    padding:8px 12px;cursor:pointer;font-size:13.5px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .mention-item:hover{background:#F0F4FA;}
+  .mention-item .mi-avatar{
+    width:22px;height:22px;border-radius:50%;flex-shrink:0;
+    background:linear-gradient(135deg,var(--blue-2),var(--blue-1));
+    display:flex;align-items:center;justify-content:center;
+    font-size:9.5px;font-weight:600;color:#fff;
+  }
+  .mention-item .mi-username{color:var(--muted);font-size:12px;}
   #composer-inner{
     display:flex;align-items:flex-end;gap:10px;
     border:1px solid var(--line);border-radius:12px;
@@ -169,12 +209,20 @@
     <div id="thread-header">
       <div>
         <div id="thread-title">Select a channel</div>
-        <div id="thread-sub"></div>
+        <div id="thread-sub-row">
+          <span id="threadStatusDot" class="dm-dot" style="display:none;"></span>
+          <span id="thread-sub"></span>
+        </div>
       </div>
     </div>
     <div id="messages"></div>
     <div id="empty-state" style="display:none;">Pick a channel or DM on the left to start chatting.</div>
+    <div id="typingIndicator" class="typing-indicator">
+      <span id="typingText"></span>
+      <span class="typing-dots"><span></span><span></span><span></span></span>
+    </div>
     <div id="composer">
+      <div id="mentionDropdown" class="mention-dropdown"></div>
       <div id="composer-inner">
         <textarea id="msgInput" rows="1" placeholder="Message…" disabled></textarea>
         <button id="sendBtn" disabled>&#8593;</button>
@@ -198,6 +246,10 @@ let messageSub = null;
 let unreadCounts = {};       // channelId -> number of unread messages
 let lastReadMap = {};        // channelId -> ISO timestamp I last read it
 let dmChannelByProfile = {}; // profileId -> their DM channel id with me
+let activeDmProfileId = null; // profile id of who I'm currently DMing, if any
+let typingChannelRef = null;
+let lastTypingSentAt = 0;
+let remoteTypingTimeout = null;
 
 const channelListEl = document.getElementById('channelList');
 const dmListEl = document.getElementById('dmList');
@@ -344,8 +396,11 @@ function renderSidebar(){
 
 async function openChannel(channel){
   activeChannelId = channel.id;
+  activeDmProfileId = null;
   threadTitleEl.textContent = '# ' + channel.name;
   threadSubEl.textContent = channel.description || '';
+  document.getElementById('threadStatusDot').style.display = 'none';
+  hideTypingIndicator();
   emptyStateEl.style.display = 'none';
   msgInput.disabled = false;
   sendBtn.disabled = false;
@@ -353,6 +408,7 @@ async function openChannel(channel){
   renderSidebar();
   await loadMessages(channel.id);
   listenForNewMessages(channel.id);
+  subscribeTypingChannel(channel.id);
 }
 
 async function openOrCreateDM(otherProfile){
@@ -377,9 +433,14 @@ async function openOrCreateDM(otherProfile){
   if (!dmChannel) return;
 
   activeChannelId = dmChannel.id;
+  activeDmProfileId = otherProfile.id;
   dmChannelByProfile[otherProfile.id] = dmChannel.id;
   threadTitleEl.textContent = otherProfile.first_name + ' ' + otherProfile.last_name;
   threadSubEl.textContent = otherProfile.status === 'online' ? 'Online' : 'Offline';
+  const dotEl = document.getElementById('threadStatusDot');
+  dotEl.style.display = 'inline-block';
+  dotEl.className = 'dm-dot' + (otherProfile.status === 'online' ? ' online' : '');
+  hideTypingIndicator();
   emptyStateEl.style.display = 'none';
   msgInput.disabled = false;
   sendBtn.disabled = false;
@@ -387,6 +448,7 @@ async function openOrCreateDM(otherProfile){
   renderSidebar();
   await loadMessages(dmChannel.id);
   listenForNewMessages(dmChannel.id);
+  subscribeTypingChannel(dmChannel.id);
 }
 
 async function loadMessages(channelId){
@@ -405,15 +467,31 @@ function renderMessage(msg){
   const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const escaped = msg.body
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const linked = escaped.replace(/#([A-Za-z0-9\-]+)/g, '<a class="case-link" href="#">#$1</a>');
+  const linked = linkifyCaseIds(escaped);
+  const withMentions = linkifyMentions(linked);
   row.innerHTML =
     '<div class="msg-avatar">' + initials(sender.first_name, sender.last_name) + '</div>' +
     '<div class="msg-body-wrap">' +
       '<div class="msg-meta"><span class="msg-sender">' + sender.first_name + ' ' + sender.last_name + '</span>' +
       '<span class="msg-time">' + time + '</span></div>' +
-      '<div class="msg-text">' + linked + '</div>' +
+      '<div class="msg-text">' + withMentions + '</div>' +
     '</div>';
   messagesEl.appendChild(row);
+}
+
+function linkifyCaseIds(text){
+  return text.replace(/#([A-Za-z0-9\-]+)/g, '<a class="case-link" href="#">#$1</a>');
+}
+
+function linkifyMentions(text){
+  let out = text;
+  allProfiles.forEach(p => {
+    if (!p.username) return;
+    const safe = p.username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('@' + safe + '\\b', 'gi');
+    out = out.replace(re, '<span class="mention-highlight">@' + p.username + '</span>');
+  });
+  return out;
 }
 
 function listenForNewMessages(channelId){
@@ -436,8 +514,48 @@ function subscribeToPresenceAndMembership(){
       const idx = allProfiles.findIndex(p => p.id === payload.new.id);
       if (idx > -1) allProfiles[idx] = payload.new;
       renderSidebar();
+      if (activeDmProfileId === payload.new.id){
+        threadSubEl.textContent = payload.new.status === 'online' ? 'Online' : 'Offline';
+        const dotEl = document.getElementById('threadStatusDot');
+        dotEl.className = 'dm-dot' + (payload.new.status === 'online' ? ' online' : '');
+      }
     })
     .subscribe();
+}
+
+function subscribeTypingChannel(channelId){
+  if (typingChannelRef) supabaseClient.removeChannel(typingChannelRef);
+  typingChannelRef = supabaseClient
+    .channel('typing-' + channelId)
+    .on('broadcast', { event: 'typing' }, payload => {
+      if (payload.payload.profile_id === me.id) return;
+      showTypingIndicator(payload.payload.name);
+    })
+    .subscribe();
+}
+
+function showTypingIndicator(name){
+  document.getElementById('typingText').textContent = name + ' is typing';
+  document.getElementById('typingIndicator').style.display = 'flex';
+  clearTimeout(remoteTypingTimeout);
+  remoteTypingTimeout = setTimeout(hideTypingIndicator, 3000);
+}
+
+function hideTypingIndicator(){
+  document.getElementById('typingIndicator').style.display = 'none';
+  clearTimeout(remoteTypingTimeout);
+}
+
+function broadcastTyping(){
+  if (!typingChannelRef || !activeChannelId) return;
+  const now = Date.now();
+  if (now - lastTypingSentAt < 2000) return;
+  lastTypingSentAt = now;
+  typingChannelRef.send({
+    type: 'broadcast',
+    event: 'typing',
+    payload: { profile_id: me.id, name: me.first_name }
+  });
 }
 
 async function sendMessage(){
@@ -445,6 +563,7 @@ async function sendMessage(){
   if (!text || !activeChannelId) return;
   msgInput.value = '';
   msgInput.style.height = 'auto';
+  mentionDropdownEl.style.display = 'none';
   await supabaseClient.from('messages').insert({
     channel_id: activeChannelId,
     sender_id: me.id,
@@ -452,12 +571,65 @@ async function sendMessage(){
   });
 }
 
+const mentionDropdownEl = document.getElementById('mentionDropdown');
+
+function getMentionRange(){
+  const pos = msgInput.selectionStart;
+  const text = msgInput.value;
+  const upToCursor = text.slice(0, pos);
+  const match = upToCursor.match(/(^|\s)@([A-Za-z0-9._-]*)$/);
+  if (!match) return null;
+  const query = match[2];
+  const start = pos - query.length - 1;
+  return { start, end: pos, query };
+}
+
+function updateMentionDropdown(){
+  const range = getMentionRange();
+  if (!range){ mentionDropdownEl.style.display = 'none'; return; }
+  const q = range.query.toLowerCase();
+  const matches = allProfiles.filter(p =>
+    p.id !== me.id && p.username &&
+    (p.username.toLowerCase().startsWith(q) ||
+     (p.first_name + ' ' + p.last_name).toLowerCase().startsWith(q))
+  ).slice(0, 6);
+
+  if (!matches.length){ mentionDropdownEl.style.display = 'none'; return; }
+
+  mentionDropdownEl.innerHTML = matches.map(p =>
+    '<div class="mention-item" data-username="' + p.username + '">' +
+      '<div class="mi-avatar">' + initials(p.first_name, p.last_name) + '</div>' +
+      '<span>' + p.first_name + ' ' + p.last_name + ' <span class="mi-username">@' + p.username + '</span></span>' +
+    '</div>').join('');
+  mentionDropdownEl.style.display = 'block';
+  mentionDropdownEl.querySelectorAll('.mention-item').forEach(item => {
+    item.onclick = () => insertMention(item.dataset.username);
+  });
+}
+
+function insertMention(username){
+  const range = getMentionRange();
+  if (!range) return;
+  const text = msgInput.value;
+  const before = text.slice(0, range.start);
+  const after = text.slice(range.end);
+  const insertText = '@' + username + ' ';
+  msgInput.value = before + insertText + after;
+  const newPos = (before + insertText).length;
+  mentionDropdownEl.style.display = 'none';
+  msgInput.focus();
+  msgInput.setSelectionRange(newPos, newPos);
+}
+
 msgInput.addEventListener('input', () => {
   msgInput.style.height = 'auto';
   msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+  updateMentionDropdown();
+  broadcastTyping();
 });
 msgInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey){
+  if (e.key === 'Escape'){ mentionDropdownEl.style.display = 'none'; return; }
+  if (e.key === 'Enter' && !e.shiftKey && mentionDropdownEl.style.display !== 'block'){
     e.preventDefault();
     sendMessage();
   }
