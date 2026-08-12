@@ -477,30 +477,37 @@ async function init(){
   startHeartbeat();
   startPresenceRefresh();
 
-  if (me.role !== 'admin' && !me.bypass_working_hours){
+  if (me.role !== 'admin'){
     startWorkingHoursWatch();
   }
 }
 
 // Force-logs out agents (not admins) once past the working-hours cutoff,
 // checked against the database server clock rather than the device's own
-// clock. Checks every minute so it catches sessions left open overnight.
+// clock. Always running for non-admins (not just when bypass is off) so
+// that if an admin turns bypass off mid-session, the very next tick
+// enforces it — bypass state is read live from `me` each time, not
+// captured once at page load.
+const WORK_CUTOFF_MINUTES = 19 * 60 + 15; // 7:15 PM
+
+async function enforceWorkingHoursNow(){
+  if (me.role === 'admin' || me.bypass_working_hours) return;
+  const { data: serverNow } = await supabaseClient.rpc('get_server_time');
+  if (!serverNow) return;
+  const now = new Date(serverNow);
+  const minutesNow = now.getHours() * 60 + now.getMinutes();
+  if (minutesNow >= WORK_CUTOFF_MINUTES){
+    await supabaseClient.from('profiles')
+      .update({ status: 'offline', last_seen: '1970-01-01T00:00:00Z', current_session_id: null })
+      .eq('id', me.id);
+    await supabaseClient.auth.signOut();
+    localStorage.removeItem('gcachat_session_token');
+    window.location.href = 'index.html?sessionEnded=1';
+  }
+}
+
 function startWorkingHoursWatch(){
-  const CUTOFF_MINUTES = 19 * 60 + 15; // 7:15 PM
-  setInterval(async () => {
-    const { data: serverNow } = await supabaseClient.rpc('get_server_time');
-    if (!serverNow) return;
-    const now = new Date(serverNow);
-    const minutesNow = now.getHours() * 60 + now.getMinutes();
-    if (minutesNow >= CUTOFF_MINUTES){
-      await supabaseClient.from('profiles')
-        .update({ status: 'offline', last_seen: '1970-01-01T00:00:00Z', current_session_id: null })
-        .eq('id', me.id);
-      await supabaseClient.auth.signOut();
-      localStorage.removeItem('gcachat_session_token');
-      window.location.href = 'index.html?sessionEnded=1';
-    }
-  }, 60000);
+  setInterval(enforceWorkingHoursNow, 60000);
 }
 
 // Auto-join every agent to a shared "General" channel on first login.
@@ -783,11 +790,19 @@ function subscribeToPresenceAndMembership(){
       }
 
       if (payload.new.id === me.id){
+        const bypassJustDisabled = me.bypass_working_hours && !payload.new.bypass_working_hours;
+        me = { ...me, ...payload.new };
+
         const myToken = localStorage.getItem('gcachat_session_token');
         if (payload.new.current_session_id && payload.new.current_session_id !== myToken){
           await supabaseClient.auth.signOut();
           localStorage.removeItem('gcachat_session_token');
           window.location.href = 'index.html?otherSession=1';
+          return;
+        }
+
+        if (bypassJustDisabled){
+          await enforceWorkingHoursNow();
         }
       }
     })
