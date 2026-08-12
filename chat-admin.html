@@ -85,6 +85,22 @@
   .modal-close{background:none;border:none;font-size:22px;color:var(--muted);cursor:pointer;line-height:1;}
   .modal-close:hover{color:#fff;}
   .modal-body{padding:20px;}
+  .toggle-wrap{display:flex;align-items:center;gap:6px;}
+  .toggle-switch{
+    position:relative;width:36px;height:20px;flex-shrink:0;cursor:pointer;
+  }
+  .toggle-switch input{opacity:0;width:0;height:0;position:absolute;}
+  .toggle-slider{
+    position:absolute;inset:0;background:#2A3A63;border-radius:20px;
+    transition:background .15s;
+  }
+  .toggle-slider::before{
+    content:'';position:absolute;width:14px;height:14px;left:3px;top:3px;
+    background:#fff;border-radius:50%;transition:transform .15s;
+  }
+  .toggle-switch input:checked + .toggle-slider{background:var(--blue-2);}
+  .toggle-switch input:checked + .toggle-slider::before{transform:translateX(16px);}
+  .toggle-label{font-size:11px;color:var(--muted);}
 </style>
 </head>
 <body>
@@ -136,7 +152,7 @@
     <h2>Existing agents</h2>
     <p class="hint">Everyone who currently has a login.</p>
     <table>
-      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>First login</th><th>Last login</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>First login</th><th>Last login</th><th>Bypass hours</th><th>Actions</th></tr></thead>
       <tbody id="agentTable"></tbody>
     </table>
   </div>
@@ -222,6 +238,17 @@ async function guardAdmin(){
 let agentsCache = [];
 let confirmingDeleteId = null;
 
+function isOnline(profile){
+  if (!profile || !profile.last_seen) return false;
+  return (Date.now() - new Date(profile.last_seen).getTime()) < 50000;
+}
+
+async function toggleBypass(id, checked){
+  await supabaseClient.from('profiles').update({ bypass_working_hours: checked }).eq('id', id);
+  const a = agentsCache.find(x => x.id === id);
+  if (a) a.bypass_working_hours = checked;
+}
+
 function formatDateTime(iso){
   if (!iso) return '—';
   return new Date(iso).toLocaleString([], {
@@ -261,11 +288,19 @@ function renderAgentTable(){
       <td>${a.first_name} ${a.last_name}</td>
       <td>${a.username}</td>
       <td><span class="role-pill ${a.role}">${a.role}</span></td>
-      <td><span class="status-dot ${a.status === 'online' ? 'online' : ''}"></span>${a.status}</td>
+      <td><span class="status-dot ${isOnline(a) ? 'online' : ''}"></span>${isOnline(a) ? 'online' : 'offline'}</td>
       <td style="font-size:12px;color:var(--muted);">${formatDateTime(a.firstLogin)}</td>
       <td style="font-size:12px;color:var(--muted);cursor:${a.loginTimes.length ? 'pointer' : 'default'};${a.loginTimes.length ? 'text-decoration:underline;text-decoration-style:dotted;' : ''}"
           ${a.loginTimes.length ? `onclick="openHistoryModal('${a.id}')"` : ''}>
         ${formatDateTime(a.lastLogin)}
+      </td>
+      <td>
+        ${a.role === 'admin'
+          ? `<span class="toggle-label">Always on</span>`
+          : `<label class="toggle-switch">
+               <input type="checkbox" ${a.bypass_working_hours ? 'checked' : ''} onchange="toggleBypass('${a.id}', this.checked)">
+               <span class="toggle-slider"></span>
+             </label>`}
       </td>
       <td>
         <div class="row-actions">
@@ -447,7 +482,10 @@ form.addEventListener('submit', async (e) => {
 
 (async () => {
   const session = await guardAdmin();
-  if (session) loadAgents();
+  if (session){
+    loadAgents();
+    setInterval(loadAgents, 20000);
+  }
 })();
 </script>
 </body>
