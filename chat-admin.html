@@ -48,6 +48,20 @@
     font-family:'DM Sans',sans-serif;font-weight:600;font-size:14px;cursor:pointer;
   }
   button.submit:disabled{opacity:.6;cursor:default;}
+  .card code{
+    background:var(--navy);border:1px solid var(--line);border-radius:5px;
+    padding:1px 6px;font-size:12px;color:#7FC0F5;
+  }
+  input[type="file"]{
+    padding:9px 10px;font-size:13px;margin-bottom:10px;
+  }
+  .csv-result-row{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px;
+  }
+  .csv-result-row .cr-status{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:7px;}
+  .csv-result-row .cr-status.ok{background:rgba(63,190,122,.15);color:#5FDB93;}
+  .csv-result-row .cr-status.fail{background:rgba(255,107,107,.15);color:var(--danger);}
   .msg{margin-top:14px;padding:11px 13px;border-radius:8px;font-size:13px;display:none;}
   .msg.ok{background:rgba(63,190,122,.12);color:#5FDB93;border:1px solid rgba(63,190,122,.35);display:block;}
   .msg.err{background:rgba(255,107,107,.12);color:var(--danger);border:1px solid rgba(255,107,107,.35);display:block;}
@@ -146,6 +160,15 @@
       <button type="submit" class="submit" id="submitBtn">Create login</button>
       <div class="msg" id="msgBox"></div>
     </form>
+  </div>
+
+  <div class="card">
+    <h2>Bulk import agents</h2>
+    <p class="hint">Upload a CSV with just a name and password per agent — username is generated automatically, and each agent gets prompted to confirm their name split and details themselves the first time they log in. Columns, in order, with a header row: <code>name,password</code>.</p>
+    <input type="file" id="csvFileInput" accept=".csv">
+    <button class="submit" id="csvImportBtn" disabled>Import agents</button>
+    <div class="msg" id="csvMsg"></div>
+    <div id="csvResults"></div>
   </div>
 
   <div class="card">
@@ -508,6 +531,101 @@ form.addEventListener('submit', async (e) => {
     submitBtn.disabled = false;
     submitBtn.textContent = 'Create login';
   }
+});
+
+// ---- Bulk CSV import ----
+let selectedCsvFile = null;
+
+function usernameFromName(name){
+  return name.trim().toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim()
+    .split(/\s+/)
+    .join('.');
+}
+
+function splitName(name){
+  const parts = name.trim().split(/\s+/);
+  return {
+    firstName: parts[0] || name.trim(),
+    lastName: parts.slice(1).join(' ')
+  };
+}
+
+function parseCsv(text){
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+  if (lines.length < 2) return [];
+  return lines.slice(1).map(line => {
+    const [name, password] = line.split(',').map(s => (s || '').trim());
+    return { name, password };
+  }).filter(row => row.name && row.password);
+}
+
+document.getElementById('csvFileInput').addEventListener('change', (e) => {
+  selectedCsvFile = e.target.files[0] || null;
+  document.getElementById('csvImportBtn').disabled = !selectedCsvFile;
+  document.getElementById('csvResults').innerHTML = '';
+  document.getElementById('csvMsg').style.display = 'none';
+});
+
+document.getElementById('csvImportBtn').addEventListener('click', async () => {
+  if (!selectedCsvFile) return;
+  const btn = document.getElementById('csvImportBtn');
+  const msg = document.getElementById('csvMsg');
+  const resultsEl = document.getElementById('csvResults');
+  resultsEl.innerHTML = '';
+  msg.style.display = 'none';
+
+  const text = await selectedCsvFile.text();
+  const rows = parseCsv(text);
+  if (!rows.length){
+    msg.textContent = 'No valid rows found. Make sure the file has a header row and name,password columns.';
+    msg.className = 'msg err';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+  const { data: { session } } = await supabaseClient.auth.getSession();
+
+  for (const row of rows){
+    const { firstName, lastName } = splitName(row.name);
+    const username = usernameFromName(row.name);
+    const rowEl = document.createElement('div');
+    rowEl.className = 'csv-result-row';
+    rowEl.innerHTML = '<span>' + row.name + ' (' + username + ')</span><span class="cr-status">…</span>';
+    resultsEl.appendChild(rowEl);
+
+    try {
+      const res = await fetch(SUPABASE_URL + '/functions/v1/create-agent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + session.access_token
+        },
+        body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName,
+          username: username,
+          password: row.password,
+          role: 'agent'
+        })
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed');
+      rowEl.querySelector('.cr-status').textContent = 'Created';
+      rowEl.querySelector('.cr-status').className = 'cr-status ok';
+    } catch (err) {
+      rowEl.querySelector('.cr-status').textContent = err.message;
+      rowEl.querySelector('.cr-status').className = 'cr-status fail';
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Import agents';
+  msg.textContent = 'Import finished — check results above.';
+  msg.className = 'msg ok';
+  loadAgents();
 });
 
 (async () => {
