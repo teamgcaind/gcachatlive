@@ -264,11 +264,14 @@ function genSessionToken(){
   return (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
 }
 
-const ACTIVE_SESSION_THRESHOLD_MS = 50000;
+// Whether this account currently has an active session recorded is now a
+// simple non-null check, not a timing guess — current_session_id gets
+// cleared to null on every clean logout (explicit sign-out, or the 7:15 PM
+// auto-logout), so "it's set" reliably means "someone hasn't cleanly ended
+// that session yet" rather than depending on a heartbeat landing within
+// some arbitrary recent window.
 function hasActiveOtherSession(profile){
-  return !!profile.current_session_id
-    && !!profile.last_seen
-    && (Date.now() - new Date(profile.last_seen).getTime()) < ACTIVE_SESSION_THRESHOLD_MS;
+  return !!profile.current_session_id;
 }
 
 async function completeLogin(userId){

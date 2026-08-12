@@ -493,8 +493,11 @@ function startWorkingHoursWatch(){
     const now = new Date(serverNow);
     const minutesNow = now.getHours() * 60 + now.getMinutes();
     if (minutesNow >= CUTOFF_MINUTES){
-      await supabaseClient.from('profiles').update({ status: 'offline' }).eq('id', me.id);
+      await supabaseClient.from('profiles')
+        .update({ status: 'offline', last_seen: '1970-01-01T00:00:00Z', current_session_id: null })
+        .eq('id', me.id);
       await supabaseClient.auth.signOut();
+      localStorage.removeItem('gcachat_session_token');
       window.location.href = 'index.html?sessionEnded=1';
     }
   }, 60000);
@@ -980,9 +983,11 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
   if (me){
     // Backdating last_seen (rather than just setting status) makes the
     // offline dot flip immediately for everyone else, instead of waiting
-    // for the ~50s staleness window to pass.
+    // for the ~50s staleness window to pass. Clearing current_session_id
+    // means the next login on any device won't get an unnecessary
+    // "already logged in elsewhere" prompt.
     await supabaseClient.from('profiles')
-      .update({ status: 'offline', last_seen: '1970-01-01T00:00:00Z' })
+      .update({ status: 'offline', last_seen: '1970-01-01T00:00:00Z', current_session_id: null })
       .eq('id', me.id);
   }
   await supabaseClient.auth.signOut();
