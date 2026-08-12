@@ -235,22 +235,10 @@ async function init(){
 }
 
 // Auto-join every agent to a shared "General" channel on first login.
+// Done as one atomic server-side step (see fix-atomic-channel-creation.sql)
+// so there's no gap where the channel exists but membership doesn't yet.
 async function ensureGeneralChannel(){
-  let { data: gen } = await supabaseClient
-    .from('channels').select('*').eq('name', 'General').eq('is_dm', false).maybeSingle();
-
-  if (!gen){
-    const { data: created } = await supabaseClient
-      .from('channels')
-      .insert({ name: 'General', description: 'Whole-team channel', is_dm: false, created_by: me?.id })
-      .select().single();
-    gen = created;
-  }
-  if (gen){
-    await supabaseClient
-      .from('channel_members')
-      .upsert({ channel_id: gen.id, profile_id: (await supabaseClient.auth.getUser()).data.user.id }, { onConflict: 'channel_id,profile_id' });
-  }
+  await supabaseClient.rpc('ensure_general_channel');
 }
 
 async function loadMyChannels(){
@@ -303,34 +291,25 @@ async function openChannel(channel){
 }
 
 async function openOrCreateDM(otherProfile){
-  const { data: myDms } = await supabaseClient
-    .from('channel_members').select('channel_id').eq('profile_id', me.id);
-  const myDmIds = (myDms || []).map(m => m.channel_id);
+  // One atomic server-side call: finds an existing DM or creates it + both
+  // memberships together, so there's never a moment where the channel
+  // exists but you're not a recognized member of it yet.
+  const { data: channelId, error } = await supabaseClient
+    .rpc('create_dm_channel', { _other_profile_id: otherProfile.id });
 
-  const { data: theirDms } = await supabaseClient
-    .from('channel_members').select('channel_id').eq('profile_id', otherProfile.id);
-  const theirDmIds = (theirDms || []).map(m => m.channel_id);
-
-  const shared = myDmIds.filter(id => theirDmIds.includes(id));
-  let dmChannel = null;
-  if (shared.length){
-    const { data: existing } = await supabaseClient
-      .from('channels').select('*').in('id', shared).eq('is_dm', true).maybeSingle();
-    dmChannel = existing;
+  if (error || !channelId){
+    console.error('Could not open DM:', error);
+    return;
   }
 
+  let dmChannel = dms.find(d => d.id === channelId);
   if (!dmChannel){
-    const { data: created } = await supabaseClient
-      .from('channels')
-      .insert({ name: otherProfile.first_name, is_dm: true, created_by: me.id })
-      .select().single();
-    dmChannel = created;
-    await supabaseClient.from('channel_members').insert([
-      { channel_id: dmChannel.id, profile_id: me.id },
-      { channel_id: dmChannel.id, profile_id: otherProfile.id }
-    ]);
-    dms.push(dmChannel);
+    const { data: fetched } = await supabaseClient
+      .from('channels').select('*').eq('id', channelId).single();
+    dmChannel = fetched;
+    if (dmChannel) dms.push(dmChannel);
   }
+  if (!dmChannel) return;
 
   activeChannelId = dmChannel.id;
   threadTitleEl.textContent = otherProfile.first_name + ' ' + otherProfile.last_name;
