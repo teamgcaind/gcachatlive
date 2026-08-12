@@ -55,9 +55,7 @@
   }
   .brand .mark{
     width:40px;height:40px;border-radius:10px;
-    background:linear-gradient(135deg,var(--blue-2),var(--blue-1));
-    display:flex;align-items:center;justify-content:center;
-    font-family:'Outfit',sans-serif;font-weight:700;font-size:16px;
+    object-fit:cover;flex-shrink:0;
   }
   .brand .name{font-family:'Outfit',sans-serif;font-weight:600;font-size:17px;letter-spacing:.2px;}
   .brand .sub{font-size:12px;color:#93A0BD;margin-top:2px;}
@@ -166,7 +164,7 @@
 <div class="login-wrap">
 <div class="side">
   <div class="brand">
-    <div class="mark">G</div>
+    <img class="mark" src="gca_logo.png" alt="GCA">
     <div>
       <div class="name">GCA Chat</div>
       <div class="sub">Internal team communication</div>
