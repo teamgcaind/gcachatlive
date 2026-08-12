@@ -988,6 +988,9 @@ document.getElementById('savePasswordBtn').addEventListener('click', async () =>
     msg.textContent = error.message;
     msg.className = 'modal-msg err';
   } else {
+    await supabaseClient
+      .from('password_change_history')
+      .insert({ profile_id: me.id, changed_by_role: 'self' });
     document.getElementById('accNewPassword').value = '';
     msg.textContent = 'Password updated.';
     msg.className = 'modal-msg ok';

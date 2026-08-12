@@ -152,7 +152,7 @@
     <h2>Existing agents</h2>
     <p class="hint">Everyone who currently has a login.</p>
     <table>
-      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>First login</th><th>Last login</th><th>Bypass hours</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>First login</th><th>Last login</th><th>Password changes</th><th>Bypass hours</th><th>Actions</th></tr></thead>
       <tbody id="agentTable"></tbody>
     </table>
   </div>
@@ -262,11 +262,20 @@ async function loadAgents(){
   const { data: history } = await supabaseClient
     .from('login_history').select('profile_id, logged_in_at')
     .order('logged_in_at', { ascending: true });
+  const { data: pwdHistory } = await supabaseClient
+    .from('password_change_history').select('profile_id, changed_at, changed_by_role')
+    .order('changed_at', { ascending: false });
 
   const loginMap = {};
   (history || []).forEach(h => {
     if (!loginMap[h.profile_id]) loginMap[h.profile_id] = [];
     loginMap[h.profile_id].push(h.logged_in_at);
+  });
+
+  const pwdMap = {};
+  (pwdHistory || []).forEach(h => {
+    if (!pwdMap[h.profile_id]) pwdMap[h.profile_id] = [];
+    pwdMap[h.profile_id].push({ at: h.changed_at, by: h.changed_by_role });
   });
 
   agentsCache = (agents || []).map(a => {
@@ -275,7 +284,8 @@ async function loadAgents(){
       ...a,
       firstLogin: times.length ? times[0] : null,
       lastLogin: times.length ? times[times.length - 1] : null,
-      loginTimes: times
+      loginTimes: times,
+      passwordChanges: pwdMap[a.id] || []
     };
   });
   renderAgentTable();
@@ -293,6 +303,10 @@ function renderAgentTable(){
       <td style="font-size:12px;color:var(--muted);cursor:${a.loginTimes.length ? 'pointer' : 'default'};${a.loginTimes.length ? 'text-decoration:underline;text-decoration-style:dotted;' : ''}"
           ${a.loginTimes.length ? `onclick="openHistoryModal('${a.id}')"` : ''}>
         ${formatDateTime(a.lastLogin)}
+      </td>
+      <td style="font-size:12.5px;color:var(--muted);cursor:${a.passwordChanges.length ? 'pointer' : 'default'};${a.passwordChanges.length ? 'text-decoration:underline;text-decoration-style:dotted;' : ''}"
+          ${a.passwordChanges.length ? `onclick="openPasswordHistoryModal('${a.id}')"` : ''}>
+        ${a.passwordChanges.length ? a.passwordChanges.length + '×' : '—'}
       </td>
       <td>
         ${a.role === 'admin'
@@ -330,6 +344,22 @@ function openHistoryModal(id){
   body.innerHTML = sorted.length
     ? sorted.map(t => '<div style="padding:8px 0;border-bottom:1px solid var(--line);font-size:13.5px;">' + formatDateTime(t) + '</div>').join('')
     : '<div style="color:var(--muted);font-size:13px;">No logins recorded yet.</div>';
+  document.getElementById('historyModal').style.display = 'flex';
+}
+
+function openPasswordHistoryModal(id){
+  const a = agentsCache.find(x => x.id === id);
+  if (!a) return;
+  document.getElementById('historyModalTitle').textContent =
+    'Password changes — ' + a.first_name + ' ' + a.last_name;
+  const body = document.getElementById('historyModalBody');
+  body.innerHTML = a.passwordChanges.length
+    ? a.passwordChanges.map(c =>
+        '<div style="padding:8px 0;border-bottom:1px solid var(--line);font-size:13.5px;display:flex;justify-content:space-between;">' +
+          '<span>' + formatDateTime(c.at) + '</span>' +
+          '<span style="color:var(--muted);font-size:12px;">' + (c.by === 'admin' ? 'Reset by admin' : 'Changed by agent') + '</span>' +
+        '</div>').join('')
+    : '<div style="color:var(--muted);font-size:13px;">No password changes recorded yet.</div>';
   document.getElementById('historyModal').style.display = 'flex';
 }
 document.getElementById('historyModalClose').addEventListener('click', () => {
