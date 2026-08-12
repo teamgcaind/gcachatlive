@@ -425,6 +425,17 @@ function initials(first, last){
   return ((first||'?')[0] + (last||'?')[0]).toUpperCase();
 }
 
+// Presence is judged by recency of last_seen, not a stored status flag —
+// a stored "online" flag never reliably flips back to offline if a tab
+// crashes or the browser is force-closed, since there's no server-side
+// process watching for that. A 30s heartbeat keeps last_seen fresh while
+// the tab is open; anything older than ~50s is treated as offline.
+const ONLINE_THRESHOLD_MS = 50000;
+function isOnline(profile){
+  if (!profile || !profile.last_seen) return false;
+  return (Date.now() - new Date(profile.last_seen).getTime()) < ONLINE_THRESHOLD_MS;
+}
+
 async function init(){
   const { data: { session } } = await supabaseClient.auth.getSession();
   if (!session){ window.location.href = 'index.html'; return; }
@@ -433,6 +444,18 @@ async function init(){
     .from('profiles').select('*').eq('id', session.user.id).single();
   if (!profile){ window.location.href = 'index.html'; return; }
   me = profile;
+
+  // Single-session enforcement: if this browser's saved token doesn't match
+  // what's currently on the profile, a newer login (elsewhere) has taken
+  // over this account since this tab was opened. This tab is no longer
+  // authoritative, so it gets signed out rather than silently continuing.
+  const myToken = localStorage.getItem('gcachat_session_token');
+  if (!myToken || myToken !== me.current_session_id){
+    await supabaseClient.auth.signOut();
+    localStorage.removeItem('gcachat_session_token');
+    window.location.href = 'index.html?otherSession=1';
+    return;
+  }
 
   document.getElementById('meName').textContent = me.first_name + ' ' + me.last_name;
   document.getElementById('meAvatar').textContent = initials(me.first_name, me.last_name);
@@ -451,8 +474,10 @@ async function init(){
   renderSidebar();
   subscribeToPresenceAndMembership();
   subscribeToAllMessagesForUnread();
+  startHeartbeat();
+  startPresenceRefresh();
 
-  if (me.role !== 'admin'){
+  if (me.role !== 'admin' && !me.bypass_working_hours){
     startWorkingHoursWatch();
   }
 }
@@ -567,7 +592,7 @@ function renderSidebar(){
     const div = document.createElement('div');
     const dmId = dmChannelByProfile[p.id];
     div.className = 'side-item' + (dmId && dmId === activeChannelId ? ' active' : '');
-    const online = p.status === 'online';
+    const online = isOnline(p);
     const count = dmId ? (unreadCounts[dmId] || 0) : 0;
     div.innerHTML =
       '<span class="dm-dot' + (online ? ' online' : '') + '"></span>' +
@@ -620,10 +645,10 @@ async function openOrCreateDM(otherProfile){
   activeDmProfileId = otherProfile.id;
   dmChannelByProfile[otherProfile.id] = dmChannel.id;
   threadTitleEl.textContent = otherProfile.first_name + ' ' + otherProfile.last_name;
-  threadSubEl.textContent = otherProfile.status === 'online' ? 'Online' : 'Offline';
+  threadSubEl.textContent = isOnline(otherProfile) ? 'Online' : 'Offline';
   const dotEl = document.getElementById('threadStatusDot');
   dotEl.style.display = 'inline-block';
-  dotEl.className = 'dm-dot' + (otherProfile.status === 'online' ? ' online' : '');
+  dotEl.className = 'dm-dot' + (isOnline(otherProfile) ? ' online' : '');
   hideTypingIndicator();
   emptyStateEl.style.display = 'none';
   msgInput.disabled = false;
@@ -744,14 +769,23 @@ function listenForNewMessages(channelId){
 function subscribeToPresenceAndMembership(){
   supabaseClient
     .channel('profiles-presence')
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, payload => {
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, async payload => {
       const idx = allProfiles.findIndex(p => p.id === payload.new.id);
       if (idx > -1) allProfiles[idx] = payload.new;
       renderSidebar();
       if (activeDmProfileId === payload.new.id){
-        threadSubEl.textContent = payload.new.status === 'online' ? 'Online' : 'Offline';
+        threadSubEl.textContent = isOnline(payload.new) ? 'Online' : 'Offline';
         const dotEl = document.getElementById('threadStatusDot');
-        dotEl.className = 'dm-dot' + (payload.new.status === 'online' ? ' online' : '');
+        dotEl.className = 'dm-dot' + (isOnline(payload.new) ? ' online' : '');
+      }
+
+      if (payload.new.id === me.id){
+        const myToken = localStorage.getItem('gcachat_session_token');
+        if (payload.new.current_session_id && payload.new.current_session_id !== myToken){
+          await supabaseClient.auth.signOut();
+          localStorage.removeItem('gcachat_session_token');
+          window.location.href = 'index.html?otherSession=1';
+        }
       }
     })
     .subscribe();
@@ -944,17 +978,53 @@ document.getElementById('savePasswordBtn').addEventListener('click', async () =>
 
 document.getElementById('logoutBtn').addEventListener('click', async () => {
   if (me){
-    await supabaseClient.from('profiles').update({ status: 'offline' }).eq('id', me.id);
+    // Backdating last_seen (rather than just setting status) makes the
+    // offline dot flip immediately for everyone else, instead of waiting
+    // for the ~50s staleness window to pass.
+    await supabaseClient.from('profiles')
+      .update({ status: 'offline', last_seen: '1970-01-01T00:00:00Z' })
+      .eq('id', me.id);
   }
   await supabaseClient.auth.signOut();
+  localStorage.removeItem('gcachat_session_token');
   window.location.href = 'index.html';
 });
 
-window.addEventListener('beforeunload', () => {
-  if (me) navigator.sendBeacon
-    ? null
-    : supabaseClient.from('profiles').update({ status: 'offline' }).eq('id', me.id);
-});
+// Note: there's deliberately no beforeunload handler here. Browsers don't
+// reliably allow authenticated network calls during tab-close, so trying
+// to mark someone offline at that moment doesn't work in practice — the
+// heartbeat + staleness check above handles abrupt disconnects instead,
+// just with a short (~50s) delay rather than being instant.
+
+// Heartbeat: keeps last_seen fresh every 30s while this tab is open. This
+// is what makes online/offline detection self-healing — if the tab is
+// killed abruptly (crash, force-quit) with no chance to run any cleanup
+// code, the heartbeat simply stops, and everyone else's staleness check
+// naturally shows this person as offline within about 50 seconds.
+function startHeartbeat(){
+  setInterval(() => {
+    if (!me) return;
+    supabaseClient.from('profiles')
+      .update({ last_seen: new Date().toISOString() })
+      .eq('id', me.id);
+  }, 30000);
+}
+
+// Re-render the sidebar periodically even with no new realtime event, so
+// someone who's gone stale (crashed tab, lost network) visibly flips to
+// offline instead of waiting for another profile UPDATE to arrive.
+function startPresenceRefresh(){
+  setInterval(() => {
+    renderSidebar();
+    if (activeDmProfileId){
+      const p = allProfiles.find(x => x.id === activeDmProfileId);
+      if (p){
+        threadSubEl.textContent = isOnline(p) ? 'Online' : 'Offline';
+        document.getElementById('threadStatusDot').className = 'dm-dot' + (isOnline(p) ? ' online' : '');
+      }
+    }
+  }, 20000);
+}
 
 // ---- Create channel ----
 document.getElementById('createChannelBtn').addEventListener('click', () => {

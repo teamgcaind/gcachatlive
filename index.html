@@ -151,6 +151,28 @@
     font-size:13px;
     line-height:1.5;
   }
+  .session-modal-overlay{
+    position:fixed;inset:0;background:rgba(6,14,31,.7);
+    display:flex;align-items:center;justify-content:center;z-index:200;
+  }
+  .session-modal-card{
+    background:#fff;color:var(--ink);border-radius:16px;
+    padding:26px;width:360px;max-width:90vw;
+  }
+  .session-modal-card h3{font-family:'Outfit',sans-serif;font-weight:600;font-size:17px;margin-bottom:10px;}
+  .session-modal-card p{font-size:13.5px;color:var(--muted);line-height:1.6;margin-bottom:20px;}
+  .session-modal-actions{display:flex;gap:10px;justify-content:flex-end;}
+  .session-modal-cancel{
+    padding:10px 16px;border:1px solid var(--line);border-radius:9px;
+    background:#fff;color:var(--ink);font-family:'DM Sans',sans-serif;
+    font-weight:600;font-size:13.5px;cursor:pointer;
+  }
+  .session-modal-confirm{
+    padding:10px 16px;border:none;border-radius:9px;
+    background:linear-gradient(135deg,var(--blue-2),var(--blue-1));color:#fff;
+    font-family:'DM Sans',sans-serif;font-weight:600;font-size:13.5px;cursor:pointer;
+  }
+
   @media(max-width:820px){
     .login-wrap{flex-direction:column;max-width:460px;}
     .side{max-width:100%;padding:40px 28px 20px;}
@@ -197,6 +219,17 @@
 </div>
 </div>
 
+<div id="sessionModal" class="session-modal-overlay" style="display:none;">
+  <div class="session-modal-card">
+    <h3>Already logged in elsewhere</h3>
+    <p>This account is currently active on another device. Logging in here will sign that device out.</p>
+    <div class="session-modal-actions">
+      <button type="button" class="session-modal-cancel" id="sessionModalCancel">Cancel</button>
+      <button type="button" class="session-modal-confirm" id="sessionModalConfirm">Log in here</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ---- Fill these in with YOUR chat app's own Supabase project (separate from any CRM project) ----
 const SUPABASE_URL = 'https://cuaayxiqpxgsrymqfnnr.supabase.co';
@@ -223,6 +256,47 @@ function showError(msg){
 if (new URLSearchParams(window.location.search).get('sessionEnded')){
   showError('Your work session has ended for the day (7:15 PM). See you tomorrow!');
 }
+if (new URLSearchParams(window.location.search).get('otherSession')){
+  showError('You were signed out because this account logged in on another device.');
+}
+
+function genSessionToken(){
+  return (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
+}
+
+const ACTIVE_SESSION_THRESHOLD_MS = 50000;
+function hasActiveOtherSession(profile){
+  return !!profile.current_session_id
+    && !!profile.last_seen
+    && (Date.now() - new Date(profile.last_seen).getTime()) < ACTIVE_SESSION_THRESHOLD_MS;
+}
+
+async function completeLogin(userId){
+  const token = genSessionToken();
+  await supabaseClient
+    .from('profiles')
+    .update({ status: 'online', last_seen: new Date().toISOString(), current_session_id: token })
+    .eq('id', userId);
+
+  await supabaseClient
+    .from('login_history')
+    .insert({ profile_id: userId });
+
+  localStorage.setItem('gcachat_session_token', token);
+  window.location.href = 'chat-app.html';
+}
+
+let pendingUserId = null;
+
+document.getElementById('sessionModalCancel').addEventListener('click', async () => {
+  document.getElementById('sessionModal').style.display = 'none';
+  await supabaseClient.auth.signOut();
+  pendingUserId = null;
+});
+document.getElementById('sessionModalConfirm').addEventListener('click', async () => {
+  document.getElementById('sessionModal').style.display = 'none';
+  if (pendingUserId) await completeLogin(pendingUserId);
+});
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -242,9 +316,9 @@ form.addEventListener('submit', async (e) => {
     if (error) throw error;
 
     const { data: profile } = await supabaseClient
-      .from('profiles').select('role').eq('id', data.user.id).single();
+      .from('profiles').select('*').eq('id', data.user.id).single();
 
-    if (profile && profile.role !== 'admin'){
+    if (profile && profile.role !== 'admin' && !profile.bypass_working_hours){
       const { data: serverNow } = await supabaseClient.rpc('get_server_time');
       const now = new Date(serverNow);
       const minutesNow = now.getHours() * 60 + now.getMinutes();
@@ -258,16 +332,13 @@ form.addEventListener('submit', async (e) => {
       }
     }
 
-    await supabaseClient
-      .from('profiles')
-      .update({ status: 'online', last_seen: new Date().toISOString() })
-      .eq('id', data.user.id);
+    if (profile && hasActiveOtherSession(profile)){
+      pendingUserId = data.user.id;
+      document.getElementById('sessionModal').style.display = 'flex';
+      return;
+    }
 
-    await supabaseClient
-      .from('login_history')
-      .insert({ profile_id: data.user.id });
-
-    window.location.href = 'chat-app.html';
+    await completeLogin(data.user.id);
   } catch (err) {
     showError(err.message === 'Invalid login credentials'
       ? 'Wrong username or password.'
