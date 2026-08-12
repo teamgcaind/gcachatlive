@@ -195,6 +195,9 @@ let channels = [];          // channels I'm a member of (is_dm = false)
 let dms = [];                // DM channels I'm a member of
 let activeChannelId = null;
 let messageSub = null;
+let unreadCounts = {};       // channelId -> number of unread messages
+let lastReadMap = {};        // channelId -> ISO timestamp I last read it
+let dmChannelByProfile = {}; // profileId -> their DM channel id with me
 
 const channelListEl = document.getElementById('channelList');
 const dmListEl = document.getElementById('dmList');
@@ -230,8 +233,10 @@ async function init(){
   allProfiles = allP || [];
 
   await loadMyChannels();
+  await loadUnreadCounts();
   renderSidebar();
   subscribeToPresenceAndMembership();
+  subscribeToAllMessagesForUnread();
 }
 
 // Auto-join every agent to a shared "General" channel on first login.
@@ -243,7 +248,9 @@ async function ensureGeneralChannel(){
 
 async function loadMyChannels(){
   const { data: memberships } = await supabaseClient
-    .from('channel_members').select('channel_id').eq('profile_id', me.id);
+    .from('channel_members').select('channel_id, last_read_at').eq('profile_id', me.id);
+  lastReadMap = {};
+  (memberships || []).forEach(m => { lastReadMap[m.channel_id] = m.last_read_at; });
   const ids = (memberships || []).map(m => m.channel_id);
   if (ids.length === 0) return;
 
@@ -252,6 +259,57 @@ async function loadMyChannels(){
 
   channels = (chans || []).filter(c => !c.is_dm);
   dms = (chans || []).filter(c => c.is_dm);
+
+  dmChannelByProfile = {};
+  if (dms.length){
+    const dmIds = dms.map(d => d.id);
+    const { data: allMembers } = await supabaseClient
+      .from('channel_members').select('channel_id, profile_id').in('channel_id', dmIds);
+    (allMembers || []).forEach(row => {
+      if (row.profile_id !== me.id){
+        dmChannelByProfile[row.profile_id] = row.channel_id;
+      }
+    });
+  }
+}
+
+async function loadUnreadCounts(){
+  const allIds = [...channels.map(c => c.id), ...dms.map(d => d.id)];
+  for (const id of allIds){
+    const lastRead = lastReadMap[id] || '1970-01-01T00:00:00Z';
+    const { count } = await supabaseClient
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('channel_id', id)
+      .gt('created_at', lastRead)
+      .neq('sender_id', me.id);
+    unreadCounts[id] = count || 0;
+  }
+}
+
+async function markChannelRead(channelId){
+  unreadCounts[channelId] = 0;
+  const now = new Date().toISOString();
+  lastReadMap[channelId] = now;
+  renderSidebar();
+  await supabaseClient
+    .from('channel_members')
+    .update({ last_read_at: now })
+    .eq('channel_id', channelId)
+    .eq('profile_id', me.id);
+}
+
+function subscribeToAllMessagesForUnread(){
+  supabaseClient
+    .channel('all-messages-unread')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+      const msg = payload.new;
+      if (msg.sender_id === me.id) return;
+      if (msg.channel_id === activeChannelId) return;
+      unreadCounts[msg.channel_id] = (unreadCounts[msg.channel_id] || 0) + 1;
+      renderSidebar();
+    })
+    .subscribe();
 }
 
 function renderSidebar(){
@@ -259,7 +317,10 @@ function renderSidebar(){
   channels.forEach(c => {
     const div = document.createElement('div');
     div.className = 'side-item' + (c.id === activeChannelId ? ' active' : '');
-    div.innerHTML = '<span class="hash">#</span><span>' + c.name + '</span>';
+    const count = unreadCounts[c.id] || 0;
+    div.innerHTML =
+      '<span class="hash">#</span><span>' + c.name + '</span>' +
+      (count > 0 ? '<span class="unread-pill">' + count + '</span>' : '');
     div.onclick = () => openChannel(c);
     channelListEl.appendChild(div);
   });
@@ -268,11 +329,14 @@ function renderSidebar(){
   const others = allProfiles.filter(p => p.id !== me.id);
   others.forEach(p => {
     const div = document.createElement('div');
-    div.className = 'side-item';
+    const dmId = dmChannelByProfile[p.id];
+    div.className = 'side-item' + (dmId && dmId === activeChannelId ? ' active' : '');
     const online = p.status === 'online';
+    const count = dmId ? (unreadCounts[dmId] || 0) : 0;
     div.innerHTML =
       '<span class="dm-dot' + (online ? ' online' : '') + '"></span>' +
-      '<span>' + p.first_name + ' ' + p.last_name + '</span>';
+      '<span>' + p.first_name + ' ' + p.last_name + '</span>' +
+      (count > 0 ? '<span class="unread-pill">' + count + '</span>' : '');
     div.onclick = () => openOrCreateDM(p);
     dmListEl.appendChild(div);
   });
@@ -285,6 +349,7 @@ async function openChannel(channel){
   emptyStateEl.style.display = 'none';
   msgInput.disabled = false;
   sendBtn.disabled = false;
+  await markChannelRead(channel.id);
   renderSidebar();
   await loadMessages(channel.id);
   listenForNewMessages(channel.id);
@@ -312,11 +377,14 @@ async function openOrCreateDM(otherProfile){
   if (!dmChannel) return;
 
   activeChannelId = dmChannel.id;
+  dmChannelByProfile[otherProfile.id] = dmChannel.id;
   threadTitleEl.textContent = otherProfile.first_name + ' ' + otherProfile.last_name;
   threadSubEl.textContent = otherProfile.status === 'online' ? 'Online' : 'Offline';
   emptyStateEl.style.display = 'none';
   msgInput.disabled = false;
   sendBtn.disabled = false;
+  await markChannelRead(dmChannel.id);
+  renderSidebar();
   await loadMessages(dmChannel.id);
   listenForNewMessages(dmChannel.id);
 }
