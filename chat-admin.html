@@ -136,7 +136,7 @@
     <h2>Existing agents</h2>
     <p class="hint">Everyone who currently has a login.</p>
     <table>
-      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>First login</th><th>Last login</th><th>Actions</th></tr></thead>
       <tbody id="agentTable"></tbody>
     </table>
   </div>
@@ -183,6 +183,16 @@
   </div>
 </div>
 
+<div id="historyModal" class="modal-overlay" style="display:none;">
+  <div class="modal-card" style="width:400px;">
+    <div class="modal-header">
+      <h3 id="historyModalTitle">Login history</h3>
+      <button class="modal-close" id="historyModalClose">&times;</button>
+    </div>
+    <div class="modal-body" id="historyModalBody"></div>
+  </div>
+</div>
+
 <script>
 // ---- Fill these in with YOUR chat app's own Supabase project ----
 const SUPABASE_URL = 'https://cuaayxiqpxgsrymqfnnr.supabase.co';
@@ -212,9 +222,35 @@ async function guardAdmin(){
 let agentsCache = [];
 let confirmingDeleteId = null;
 
+function formatDateTime(iso){
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString([], {
+    day: 'numeric', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
 async function loadAgents(){
   const { data: agents } = await supabaseClient.from('profiles').select('*').order('first_name');
-  agentsCache = agents || [];
+  const { data: history } = await supabaseClient
+    .from('login_history').select('profile_id, logged_in_at')
+    .order('logged_in_at', { ascending: true });
+
+  const loginMap = {};
+  (history || []).forEach(h => {
+    if (!loginMap[h.profile_id]) loginMap[h.profile_id] = [];
+    loginMap[h.profile_id].push(h.logged_in_at);
+  });
+
+  agentsCache = (agents || []).map(a => {
+    const times = loginMap[a.id] || [];
+    return {
+      ...a,
+      firstLogin: times.length ? times[0] : null,
+      lastLogin: times.length ? times[times.length - 1] : null,
+      loginTimes: times
+    };
+  });
   renderAgentTable();
 }
 
@@ -226,6 +262,11 @@ function renderAgentTable(){
       <td>${a.username}</td>
       <td><span class="role-pill ${a.role}">${a.role}</span></td>
       <td><span class="status-dot ${a.status === 'online' ? 'online' : ''}"></span>${a.status}</td>
+      <td style="font-size:12px;color:var(--muted);">${formatDateTime(a.firstLogin)}</td>
+      <td style="font-size:12px;color:var(--muted);cursor:${a.loginTimes.length ? 'pointer' : 'default'};${a.loginTimes.length ? 'text-decoration:underline;text-decoration-style:dotted;' : ''}"
+          ${a.loginTimes.length ? `onclick="openHistoryModal('${a.id}')"` : ''}>
+        ${formatDateTime(a.lastLogin)}
+      </td>
       <td>
         <div class="row-actions">
           <button class="icon-btn" title="Edit" onclick="openEditModal('${a.id}')">
@@ -243,6 +284,25 @@ function renderAgentTable(){
       </td>
     </tr>`).join('');
 }
+
+function openHistoryModal(id){
+  const a = agentsCache.find(x => x.id === id);
+  if (!a) return;
+  document.getElementById('historyModalTitle').textContent =
+    'Login history — ' + a.first_name + ' ' + a.last_name;
+  const body = document.getElementById('historyModalBody');
+  const sorted = [...a.loginTimes].reverse();
+  body.innerHTML = sorted.length
+    ? sorted.map(t => '<div style="padding:8px 0;border-bottom:1px solid var(--line);font-size:13.5px;">' + formatDateTime(t) + '</div>').join('')
+    : '<div style="color:var(--muted);font-size:13px;">No logins recorded yet.</div>';
+  document.getElementById('historyModal').style.display = 'flex';
+}
+document.getElementById('historyModalClose').addEventListener('click', () => {
+  document.getElementById('historyModal').style.display = 'none';
+});
+document.getElementById('historyModal').addEventListener('click', (e) => {
+  if (e.target.id === 'historyModal') e.currentTarget.style.display = 'none';
+});
 
 function askDeleteAgent(id){
   confirmingDeleteId = id;
