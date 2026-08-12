@@ -242,6 +242,10 @@ form.addEventListener('submit', async (e) => {
       .update({ status: 'online', last_seen: new Date().toISOString() })
       .eq('id', data.user.id);
 
+    await supabaseClient
+      .from('login_history')
+      .insert({ profile_id: data.user.id });
+
     window.location.href = 'chat-app.html';
   } catch (err) {
     showError(err.message === 'Invalid login credentials'
