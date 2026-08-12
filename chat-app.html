@@ -220,6 +220,48 @@
     font-size:15px;display:flex;align-items:center;justify-content:center;
   }
   #sendBtn:disabled{opacity:.5;cursor:default;}
+
+  /* Icons */
+  .icon{width:16px;height:16px;display:inline-block;vertical-align:-3px;}
+  .icon-sm{width:13px;height:13px;vertical-align:-2px;}
+
+  /* Sidebar section headers with a create button */
+  .side-section-row{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 10px 6px;
+  }
+  .side-section-row .side-section{padding:0;}
+  .section-add-btn{
+    background:none;border:none;color:#5C6A8C;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    width:20px;height:20px;border-radius:5px;
+  }
+  .section-add-btn:hover{background:#16234A;color:#fff;}
+
+  /* Sidebar search */
+  .sidebar-search{
+    margin:0 10px 10px;padding:8px 10px;
+    background:#0C1A38;border-radius:8px;
+    display:flex;align-items:center;gap:8px;cursor:pointer;
+    color:#7C87A6;font-size:13px;
+  }
+  .sidebar-search:hover{background:#101D3E;}
+
+  /* Load older messages */
+  .load-older{
+    text-align:center;padding:8px;margin-bottom:6px;
+    font-size:12.5px;color:var(--blue-1);cursor:pointer;font-weight:600;
+  }
+  .load-older:hover{text-decoration:underline;}
+
+  /* Search results modal */
+  .search-result{
+    padding:10px 14px;cursor:pointer;border-bottom:1px solid #F0F2F6;
+  }
+  .search-result:hover{background:#F5F7FB;}
+  .search-result .sr-meta{font-size:11.5px;color:var(--muted);margin-bottom:2px;}
+  .search-result .sr-body{font-size:13.5px;color:var(--ink);}
+  .search-result .sr-body mark{background:#FFEDB8;border-radius:2px;}
 </style>
 </head>
 <body>
@@ -231,14 +273,24 @@
       <div class="name">GCA Chat</div>
     </div>
     <div class="side-scroll">
-      <div class="side-section">Channels</div>
+      <div class="sidebar-search" id="sidebarSearchBtn">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <span>Search messages</span>
+      </div>
+      <div class="side-section-row">
+        <div class="side-section">Channels</div>
+        <button class="section-add-btn" id="createChannelBtn" title="Create channel" style="display:none;">
+          <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+      </div>
       <div id="channelList"></div>
       <div class="side-section">Direct messages</div>
       <div id="dmList"></div>
       <div id="adminLinkWrap" style="display:none;">
         <div class="side-section">Admin</div>
         <div class="side-item" onclick="window.location.href='chat-admin.html'">
-          <span class="hash">&#9881;</span><span>Manage agents</span>
+          <svg class="icon-sm hash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>Manage agents</span>
         </div>
       </div>
     </div>
@@ -281,6 +333,36 @@
     </div>
   </div>
 
+  <div id="createChannelModal" class="modal-overlay" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Create channel</h3>
+        <button class="modal-close" id="createChannelModalClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label>Channel name</label>
+        <input type="text" id="newChannelName" placeholder="e.g. announcements">
+        <label>Description (optional)</label>
+        <input type="text" id="newChannelDesc" placeholder="What's this channel for?">
+        <button class="modal-btn" id="createChannelSaveBtn">Create channel</button>
+        <div class="modal-msg" id="createChannelMsg"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="searchModal" class="modal-overlay" style="display:none;">
+    <div class="modal-card" style="width:480px;">
+      <div class="modal-header">
+        <h3>Search messages</h3>
+        <button class="modal-close" id="searchModalClose">&times;</button>
+      </div>
+      <div class="modal-body" style="padding-bottom:8px;">
+        <input type="text" id="searchInput" placeholder="Search across everything you can see…">
+      </div>
+      <div id="searchResults"></div>
+    </div>
+  </div>
+
   <div id="main">
     <div id="thread-header">
       <div>
@@ -291,6 +373,7 @@
         </div>
       </div>
     </div>
+    <div id="loadOlderWrap"></div>
     <div id="messages"></div>
     <div id="empty-state" style="display:none;">Pick a channel or DM on the left to start chatting.</div>
     <div id="typingIndicator" class="typing-indicator">
@@ -301,7 +384,9 @@
       <div id="mentionDropdown" class="mention-dropdown"></div>
       <div id="composer-inner">
         <textarea id="msgInput" rows="1" placeholder="Message…" disabled></textarea>
-        <button id="sendBtn" disabled>&#8593;</button>
+        <button id="sendBtn" disabled>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+        </button>
       </div>
     </div>
   </div>
@@ -353,6 +438,7 @@ async function init(){
   document.getElementById('meAvatar').textContent = initials(me.first_name, me.last_name);
   if (me.role === 'admin'){
     document.getElementById('adminLinkWrap').style.display = 'block';
+    document.getElementById('createChannelBtn').style.display = 'flex';
   }
 
   await ensureGeneralChannel();
@@ -527,32 +613,82 @@ async function openOrCreateDM(otherProfile){
   subscribeTypingChannel(dmChannel.id);
 }
 
+const PAGE_SIZE = 50;
+let oldestLoadedAt = null;
+
 async function loadMessages(channelId){
   messagesEl.innerHTML = '';
+  document.getElementById('loadOlderWrap').innerHTML = '';
   const { data: msgs } = await supabaseClient
     .from('messages').select('*').eq('channel_id', channelId)
-    .order('created_at', { ascending: true }).limit(200);
-  (msgs || []).forEach(renderMessage);
+    .order('created_at', { ascending: false }).limit(PAGE_SIZE);
+  const ordered = (msgs || []).slice().reverse();
+  oldestLoadedAt = ordered.length ? ordered[0].created_at : null;
+  ordered.forEach(renderMessage);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  renderLoadOlderControl(channelId, ordered.length === PAGE_SIZE);
+}
+
+function renderLoadOlderControl(channelId, mayHaveMore){
+  const wrap = document.getElementById('loadOlderWrap');
+  if (!mayHaveMore){ wrap.innerHTML = ''; return; }
+  wrap.innerHTML = '<div class="load-older" id="loadOlderBtn">Load older messages</div>';
+  document.getElementById('loadOlderBtn').onclick = () => loadOlderMessages(channelId);
+}
+
+async function loadOlderMessages(channelId){
+  if (!oldestLoadedAt) return;
+  const btn = document.getElementById('loadOlderBtn');
+  if (btn) btn.textContent = 'Loading…';
+
+  const { data: older } = await supabaseClient
+    .from('messages').select('*').eq('channel_id', channelId)
+    .lt('created_at', oldestLoadedAt)
+    .order('created_at', { ascending: false }).limit(PAGE_SIZE);
+  const ordered = (older || []).slice().reverse();
+
+  if (!ordered.length){
+    document.getElementById('loadOlderWrap').innerHTML = '';
+    return;
+  }
+  oldestLoadedAt = ordered[0].created_at;
+
+  const prevScrollHeight = messagesEl.scrollHeight;
+  const firstRow = messagesEl.firstChild;
+  ordered.forEach(msg => {
+    const row = buildMessageRow(msg);
+    messagesEl.insertBefore(row, firstRow);
+  });
+  messagesEl.scrollTop = messagesEl.scrollHeight - prevScrollHeight;
+
+  renderLoadOlderControl(channelId, ordered.length === PAGE_SIZE);
 }
 
 function renderMessage(msg){
-  const sender = allProfiles.find(p => p.id === msg.sender_id) || me;
+  const row = buildMessageRow(msg);
+  messagesEl.appendChild(row);
+}
+
+function buildMessageRow(msg){
+  const sender = allProfiles.find(p => p.id === msg.sender_id);
+  const senderName = sender ? (sender.first_name + ' ' + sender.last_name) : 'Deleted agent';
+  const senderInitials = sender ? initials(sender.first_name, sender.last_name) : '?';
   const row = document.createElement('div');
   row.className = 'msg-row';
+  row.dataset.messageId = msg.id;
   const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const escaped = msg.body
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const linked = linkifyCaseIds(escaped);
   const withMentions = linkifyMentions(linked);
   row.innerHTML =
-    '<div class="msg-avatar">' + initials(sender.first_name, sender.last_name) + '</div>' +
+    '<div class="msg-avatar">' + senderInitials + '</div>' +
     '<div class="msg-body-wrap">' +
-      '<div class="msg-meta"><span class="msg-sender">' + sender.first_name + ' ' + sender.last_name + '</span>' +
+      '<div class="msg-meta"><span class="msg-sender">' + senderName + '</span>' +
       '<span class="msg-time">' + time + '</span></div>' +
       '<div class="msg-text">' + withMentions + '</div>' +
     '</div>';
-  messagesEl.appendChild(row);
+  return row;
 }
 
 function linkifyCaseIds(text){
@@ -797,6 +933,140 @@ window.addEventListener('beforeunload', () => {
     ? null
     : supabaseClient.from('profiles').update({ status: 'offline' }).eq('id', me.id);
 });
+
+// ---- Create channel ----
+document.getElementById('createChannelBtn').addEventListener('click', () => {
+  document.getElementById('newChannelName').value = '';
+  document.getElementById('newChannelDesc').value = '';
+  document.getElementById('createChannelMsg').style.display = 'none';
+  document.getElementById('createChannelModal').style.display = 'flex';
+});
+document.getElementById('createChannelModalClose').addEventListener('click', () => {
+  document.getElementById('createChannelModal').style.display = 'none';
+});
+document.getElementById('createChannelModal').addEventListener('click', (e) => {
+  if (e.target.id === 'createChannelModal') e.currentTarget.style.display = 'none';
+});
+document.getElementById('createChannelSaveBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('createChannelSaveBtn');
+  const msg = document.getElementById('createChannelMsg');
+  const name = document.getElementById('newChannelName').value.trim();
+  const desc = document.getElementById('newChannelDesc').value.trim();
+  if (!name) return;
+
+  btn.disabled = true;
+  const { data: channelId, error } = await supabaseClient
+    .rpc('create_team_channel', { _name: name, _description: desc || null });
+  btn.disabled = false;
+
+  if (error){
+    msg.textContent = error.message;
+    msg.className = 'modal-msg err';
+    return;
+  }
+
+  document.getElementById('createChannelModal').style.display = 'none';
+  await loadMyChannels();
+  renderSidebar();
+  const newChannel = channels.find(c => c.id === channelId);
+  if (newChannel) openChannel(newChannel);
+});
+
+// ---- Search ----
+document.getElementById('sidebarSearchBtn').addEventListener('click', () => {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchResults').innerHTML = '';
+  document.getElementById('searchModal').style.display = 'flex';
+  document.getElementById('searchInput').focus();
+});
+document.getElementById('searchModalClose').addEventListener('click', () => {
+  document.getElementById('searchModal').style.display = 'none';
+});
+document.getElementById('searchModal').addEventListener('click', (e) => {
+  if (e.target.id === 'searchModal') e.currentTarget.style.display = 'none';
+});
+
+let searchDebounce = null;
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  clearTimeout(searchDebounce);
+  const q = e.target.value.trim();
+  if (q.length < 2){
+    document.getElementById('searchResults').innerHTML = '';
+    return;
+  }
+  searchDebounce = setTimeout(() => runSearch(q), 300);
+});
+
+function escapeHtml(text){
+  return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function channelLabel(channelId){
+  const chan = channels.find(c => c.id === channelId);
+  if (chan) return '#' + chan.name;
+  const dmProfileId = Object.keys(dmChannelByProfile).find(pid => dmChannelByProfile[pid] === channelId);
+  const person = dmProfileId ? allProfiles.find(p => p.id === dmProfileId) : null;
+  return person ? ('DM with ' + person.first_name + ' ' + person.last_name) : 'Direct message';
+}
+
+async function runSearch(query){
+  const allIds = [...channels.map(c => c.id), ...dms.map(d => d.id)];
+  if (!allIds.length) return;
+
+  const { data: results } = await supabaseClient
+    .from('messages')
+    .select('*')
+    .in('channel_id', allIds)
+    .ilike('body', '%' + query + '%')
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  const resultsEl = document.getElementById('searchResults');
+  if (!results || !results.length){
+    resultsEl.innerHTML = '<div class="search-result" style="color:var(--muted);cursor:default;">No messages found.</div>';
+    return;
+  }
+
+  const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const highlightRe = new RegExp('(' + escapedQuery + ')', 'gi');
+
+  resultsEl.innerHTML = results.map(r => {
+    const sender = allProfiles.find(p => p.id === r.sender_id);
+    const senderName = sender ? sender.first_name + ' ' + sender.last_name : 'Deleted agent';
+    const time = new Date(r.created_at).toLocaleDateString([], { day: 'numeric', month: 'short' });
+    const bodyEscaped = escapeHtml(r.body).replace(highlightRe, '<mark>$1</mark>');
+    return '<div class="search-result" data-channel-id="' + r.channel_id + '" data-message-id="' + r.id + '">' +
+      '<div class="sr-meta">' + channelLabel(r.channel_id) + ' \u00b7 ' + senderName + ' \u00b7 ' + time + '</div>' +
+      '<div class="sr-body">' + bodyEscaped + '</div>' +
+    '</div>';
+  }).join('');
+
+  resultsEl.querySelectorAll('.search-result[data-channel-id]').forEach(el => {
+    el.onclick = () => jumpToSearchResult(el.dataset.channelId, el.dataset.messageId);
+  });
+}
+
+async function jumpToSearchResult(channelId, messageId){
+  document.getElementById('searchModal').style.display = 'none';
+
+  const chan = channels.find(c => c.id === channelId);
+  if (chan){
+    await openChannel(chan);
+  } else {
+    const dmProfileId = Object.keys(dmChannelByProfile).find(pid => dmChannelByProfile[pid] === channelId);
+    const person = dmProfileId ? allProfiles.find(p => p.id === dmProfileId) : null;
+    if (person) await openOrCreateDM(person);
+  }
+
+  setTimeout(() => {
+    const row = messagesEl.querySelector('[data-message-id="' + messageId + '"]');
+    if (row){
+      row.scrollIntoView({ block: 'center' });
+      row.style.background = '#FFF3CD';
+      setTimeout(() => { row.style.background = ''; }, 1800);
+    }
+  }, 300);
+}
 
 init();
 </script>
