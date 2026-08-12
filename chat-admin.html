@@ -125,7 +125,7 @@ document.getElementById('pwToggle').addEventListener('click', function(){
 
 async function guardAdmin(){
   const { data: { session } } = await supabaseClient.auth.getSession();
-  if (!session){ window.location.href = 'chat-login.html'; return null; }
+  if (!session){ window.location.href = 'index.html'; return null; }
   const { data: profile } = await supabaseClient
     .from('profiles').select('*').eq('id', session.user.id).single();
   if (!profile || profile.role !== 'admin'){

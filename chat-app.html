@@ -211,11 +211,11 @@ function initials(first, last){
 
 async function init(){
   const { data: { session } } = await supabaseClient.auth.getSession();
-  if (!session){ window.location.href = 'chat-login.html'; return; }
+  if (!session){ window.location.href = 'index.html'; return; }
 
   const { data: profile } = await supabaseClient
     .from('profiles').select('*').eq('id', session.user.id).single();
-  if (!profile){ window.location.href = 'chat-login.html'; return; }
+  if (!profile){ window.location.href = 'index.html'; return; }
   me = profile;
 
   document.getElementById('meName').textContent = me.first_name + ' ' + me.last_name;
@@ -422,7 +422,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     await supabaseClient.from('profiles').update({ status: 'offline' }).eq('id', me.id);
   }
   await supabaseClient.auth.signOut();
-  window.location.href = 'chat-login.html';
+  window.location.href = 'index.html';
 });
 
 window.addEventListener('beforeunload', () => {
