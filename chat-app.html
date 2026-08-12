@@ -451,6 +451,28 @@ async function init(){
   renderSidebar();
   subscribeToPresenceAndMembership();
   subscribeToAllMessagesForUnread();
+
+  if (me.role !== 'admin'){
+    startWorkingHoursWatch();
+  }
+}
+
+// Force-logs out agents (not admins) once past the working-hours cutoff,
+// checked against the database server clock rather than the device's own
+// clock. Checks every minute so it catches sessions left open overnight.
+function startWorkingHoursWatch(){
+  const CUTOFF_MINUTES = 19 * 60 + 15; // 7:15 PM
+  setInterval(async () => {
+    const { data: serverNow } = await supabaseClient.rpc('get_server_time');
+    if (!serverNow) return;
+    const now = new Date(serverNow);
+    const minutesNow = now.getHours() * 60 + now.getMinutes();
+    if (minutesNow >= CUTOFF_MINUTES){
+      await supabaseClient.from('profiles').update({ status: 'offline' }).eq('id', me.id);
+      await supabaseClient.auth.signOut();
+      window.location.href = 'index.html?sessionEnded=1';
+    }
+  }, 60000);
 }
 
 // Auto-join every agent to a shared "General" channel on first login.

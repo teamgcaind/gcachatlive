@@ -220,6 +220,10 @@ function showError(msg){
   errorBox.style.display = 'block';
 }
 
+if (new URLSearchParams(window.location.search).get('sessionEnded')){
+  showError('Your work session has ended for the day (7:15 PM). See you tomorrow!');
+}
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   errorBox.style.display = 'none';
@@ -236,6 +240,23 @@ form.addEventListener('submit', async (e) => {
       password
     });
     if (error) throw error;
+
+    const { data: profile } = await supabaseClient
+      .from('profiles').select('role').eq('id', data.user.id).single();
+
+    if (profile && profile.role !== 'admin'){
+      const { data: serverNow } = await supabaseClient.rpc('get_server_time');
+      const now = new Date(serverNow);
+      const minutesNow = now.getHours() * 60 + now.getMinutes();
+      const WORK_START = 9 * 60;      // 9:00 AM
+      const WORK_END = 19 * 60;       // 7:00 PM
+
+      if (minutesNow < WORK_START || minutesNow >= WORK_END){
+        await supabaseClient.auth.signOut();
+        showError('Agent access is only available 9:00 AM – 7:00 PM.');
+        return;
+      }
+    }
 
     await supabaseClient
       .from('profiles')
