@@ -276,10 +276,24 @@ function hasActiveOtherSession(profile){
 
 async function completeLogin(userId){
   const token = genSessionToken();
-  await supabaseClient
+  // This write is what makes presence work at all — logout deliberately
+  // backdates last_seen to 1970 (see the logout handler), so if this
+  // update silently fails (most likely cause: the profiles table's
+  // row-level-security policy doesn't have an UPDATE rule letting a user
+  // write their own row), last_seen never gets refreshed at login and
+  // that person shows as offline from the very first second, every single
+  // time, for everyone — which matches "online status doesn't work at
+  // all" far better than any client-side timing issue would. Checking the
+  // result here instead of firing-and-forgetting surfaces that instead of
+  // silently sending them into chat already broken.
+  const { error: presenceError } = await supabaseClient
     .from('profiles')
     .update({ status: 'online', last_seen: new Date().toISOString(), current_session_id: token })
     .eq('id', userId);
+
+  if (presenceError){
+    sessionStorage.setItem('gcachat_presence_error', presenceError.message);
+  }
 
   await supabaseClient
     .from('login_history')

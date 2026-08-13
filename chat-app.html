@@ -520,6 +520,16 @@ async function init(){
   if (!profile){ window.location.href = 'index.html'; return; }
   me = profile;
 
+  // If login couldn't save the initial online status (see index.html's
+  // completeLogin), surface it here rather than leaving presence silently
+  // broken with no indication why — reuses the same banner the ongoing
+  // heartbeat failure check below would show.
+  const carriedPresenceError = sessionStorage.getItem('gcachat_presence_error');
+  if (carriedPresenceError){
+    sessionStorage.removeItem('gcachat_presence_error');
+    warnHeartbeatFailure({ message: carriedPresenceError });
+  }
+
   // Single-session enforcement: if this browser's saved token doesn't match
   // what's currently on the profile, a newer login (elsewhere) has taken
   // over this account since this tab was opened. This tab is no longer
@@ -691,17 +701,46 @@ function notifyNewMessage(msg){
 function subscribeToAllMessagesForUnread(){
   supabaseClient
     .channel('all-messages-unread')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async payload => {
       const msg = payload.new;
       if (msg.sender_id === me.id) return;
-      if (msg.channel_id === activeChannelId && !document.hidden) return;
-      unreadCounts[msg.channel_id] = (unreadCounts[msg.channel_id] || 0) + 1;
+
+      // Captured before any auto-open below changes activeChannelId — this
+      // is what decides whether a sound/notification/title-badge is
+      // warranted at all. If you were already looking straight at this
+      // conversation with the tab focused, none of that should fire.
+      const wasAlreadyActive = (msg.channel_id === activeChannelId && !document.hidden);
+
       const sender = allProfiles.find(p => p.id === msg.sender_id);
       lastSenderName = sender ? sender.first_name : null;
+
+      if (msg.channel_id !== activeChannelId){
+        // Whoever just messaged you opens straight into the main pane
+        // instead of sitting as a badge you have to click into — both
+        // openChannel/openOrCreateDM already handle marking it read,
+        // loading history, and wiring up the live per-channel listener.
+        const chan = channels.find(c => c.id === msg.channel_id);
+        if (chan){
+          await openChannel(chan);
+        } else {
+          const dmProfileId = Object.keys(dmChannelByProfile).find(pid => dmChannelByProfile[pid] === msg.channel_id);
+          const person = dmProfileId ? allProfiles.find(p => p.id === dmProfileId) : null;
+          if (person){
+            await openOrCreateDM(person);
+          } else {
+            // Message from a DM this tab doesn't have cached yet — can't
+            // safely auto-open it, so fall back to a normal unread badge.
+            unreadCounts[msg.channel_id] = (unreadCounts[msg.channel_id] || 0) + 1;
+          }
+        }
+      }
+
       renderSidebar();
-      updateTitleBadge();
-      playNotificationSound();
-      notifyNewMessage(msg);
+      if (!wasAlreadyActive){
+        updateTitleBadge();
+        playNotificationSound();
+        notifyNewMessage(msg);
+      }
     })
     .subscribe();
 }
@@ -1179,12 +1218,32 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 // killed abruptly (crash, force-quit) with no chance to run any cleanup
 // code, the heartbeat simply stops, and everyone else's staleness check
 // naturally shows this person as offline within about 90 seconds.
+// Both write calls below now surface failures instead of swallowing them —
+// if the profiles table's UPDATE row-level-security policy doesn't allow a
+// user to write their own last_seen (a very easy thing to have never set
+// up, since it fails with zero visible error), every heartbeat would
+// silently no-op forever and everyone would show offline permanently, no
+// matter how correct the client-side timing logic is. A single console
+// warning plus a one-time on-screen banner makes that failure mode visible
+// instead of invisible.
+let heartbeatFailureWarned = false;
+function warnHeartbeatFailure(error){
+  console.error('Presence heartbeat failed to save:', error.message);
+  if (heartbeatFailureWarned) return;
+  heartbeatFailureWarned = true;
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#a32d2d;color:#fff;padding:10px 16px;text-align:center;font-size:13px;font-family:sans-serif;z-index:999;';
+  banner.textContent = 'Online status isn\'t saving (' + error.message + ') — this usually means the profiles table is missing an UPDATE permission for signed-in users. Contact your admin.';
+  document.body.prepend(banner);
+}
+
 function startHeartbeat(){
   setInterval(() => {
     if (!me) return;
     supabaseClient.from('profiles')
       .update({ last_seen: new Date().toISOString() })
-      .eq('id', me.id);
+      .eq('id', me.id)
+      .then(({ error }) => { if (error) warnHeartbeatFailure(error); });
   }, 30000);
 }
 
@@ -1200,7 +1259,8 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && me){
     supabaseClient.from('profiles')
       .update({ last_seen: new Date().toISOString() })
-      .eq('id', me.id);
+      .eq('id', me.id)
+      .then(({ error }) => { if (error) warnHeartbeatFailure(error); });
   }
 });
 
