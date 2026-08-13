@@ -423,14 +423,53 @@ let activeChannelId = null;
 let messageSub = null;
 let unreadCounts = {};       // channelId -> number of unread messages
 const BASE_TITLE = document.title;
+let lastSenderName = null;   // who most recently sent an unread message, for the tab title
 
 // Mirrors the "(65) WhatsApp" style tab badge — the total unread count
-// across every channel and DM prefixes the tab title, so it's visible
-// even when this tab isn't the active one, and clears back to the plain
+// across every channel and DM prefixes the tab title, plus the name of
+// whoever sent the most recent one, so glancing at the tab tells you both
+// how much is waiting and who to check first. Clears back to the plain
 // title the moment everything's read.
 function updateTitleBadge(){
   const total = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
-  document.title = total > 0 ? '(' + (total > 99 ? '99+' : total) + ') ' + BASE_TITLE : BASE_TITLE;
+  if (total <= 0){ document.title = BASE_TITLE; return; }
+  const countLabel = '(' + (total > 99 ? '99+' : total) + ') ';
+  document.title = countLabel + (lastSenderName ? lastSenderName + ' — ' : '') + BASE_TITLE;
+}
+
+// A short, deliberately minimal two-tone blip (closer to Skype/Google Chat
+// than a full sound file) — synthesized with the Web Audio API so there's
+// no separate audio asset to host or upload alongside this file.
+let audioCtx = null;
+function ensureAudioContext(){
+  if (!audioCtx){
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+// Browsers block audio until a real user gesture has happened on the page;
+// this quietly primes the context on the first click/keypress so the very
+// first notification sound isn't silently swallowed.
+document.addEventListener('click', ensureAudioContext, { once: true });
+document.addEventListener('keydown', ensureAudioContext, { once: true });
+
+function playNotificationSound(){
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  [ [880, 0], [1108, 0.09] ].forEach(([freq, delay]) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0, now + delay);
+    gain.gain.linearRampToValueAtTime(0.12, now + delay + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.16);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now + delay);
+    osc.stop(now + delay + 0.18);
+  });
 }
 let lastReadMap = {};        // channelId -> ISO timestamp I last read it
 let dmChannelByProfile = {}; // profileId -> their DM channel id with me
@@ -610,6 +649,7 @@ async function loadUnreadCounts(){
 
 async function markChannelRead(channelId){
   unreadCounts[channelId] = 0;
+  if (Object.values(unreadCounts).reduce((a, b) => a + b, 0) === 0) lastSenderName = null;
   updateTitleBadge();
   const now = new Date().toISOString();
   lastReadMap[channelId] = now;
@@ -656,8 +696,11 @@ function subscribeToAllMessagesForUnread(){
       if (msg.sender_id === me.id) return;
       if (msg.channel_id === activeChannelId && !document.hidden) return;
       unreadCounts[msg.channel_id] = (unreadCounts[msg.channel_id] || 0) + 1;
+      const sender = allProfiles.find(p => p.id === msg.sender_id);
+      lastSenderName = sender ? sender.first_name : null;
       renderSidebar();
       updateTitleBadge();
+      playNotificationSound();
       notifyNewMessage(msg);
     })
     .subscribe();
@@ -1164,8 +1207,26 @@ document.addEventListener('visibilitychange', () => {
 // Re-render the sidebar periodically even with no new realtime event, so
 // someone who's gone stale (crashed tab, lost network) visibly flips to
 // offline instead of waiting for another profile UPDATE to arrive.
+//
+// This used to only re-render the already-loaded allProfiles array, which
+// meant it was purely cosmetic — if the realtime "profiles-presence"
+// subscription wasn't actually delivering UPDATE events (e.g. Realtime
+// replication isn't enabled for the profiles table in Supabase, which
+// fails completely silently), everyone else's last_seen would stay frozen
+// at whatever it was the moment this tab loaded, no matter how online they
+// actually were. This is the root cause behind "the fix didn't help, they
+// still show offline" — the browser was never re-asking the database.
+// Now it genuinely re-fetches every 20s, so presence is correct even if
+// the realtime channel silently isn't working. Worth also checking
+// Supabase Dashboard → Database → Replication → profiles has realtime
+// switched on, since that's the other half of this — this refetch is a
+// safety net, not a replacement for realtime being configured correctly.
 function startPresenceRefresh(){
-  setInterval(() => {
+  setInterval(async () => {
+    const { data: freshProfiles, error } = await supabaseClient.from('profiles').select('*');
+    if (!error && freshProfiles){
+      allProfiles = freshProfiles;
+    }
     renderSidebar();
     if (activeDmProfileId){
       const p = allProfiles.find(x => x.id === activeDmProfileId);
