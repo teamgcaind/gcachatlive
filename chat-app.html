@@ -422,6 +422,16 @@ let dms = [];                // DM channels I'm a member of
 let activeChannelId = null;
 let messageSub = null;
 let unreadCounts = {};       // channelId -> number of unread messages
+const BASE_TITLE = document.title;
+
+// Mirrors the "(65) WhatsApp" style tab badge — the total unread count
+// across every channel and DM prefixes the tab title, so it's visible
+// even when this tab isn't the active one, and clears back to the plain
+// title the moment everything's read.
+function updateTitleBadge(){
+  const total = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
+  document.title = total > 0 ? '(' + (total > 99 ? '99+' : total) + ') ' + BASE_TITLE : BASE_TITLE;
+}
 let lastReadMap = {};        // channelId -> ISO timestamp I last read it
 let dmChannelByProfile = {}; // profileId -> their DM channel id with me
 let activeDmProfileId = null; // profile id of who I'm currently DMing, if any
@@ -446,8 +456,17 @@ function initials(first, last){
 // a stored "online" flag never reliably flips back to offline if a tab
 // crashes or the browser is force-closed, since there's no server-side
 // process watching for that. A 30s heartbeat keeps last_seen fresh while
-// the tab is open; anything older than ~50s is treated as offline.
-const ONLINE_THRESHOLD_MS = 50000;
+// the tab is open; anything older than the threshold is treated as offline.
+//
+// Threshold is 90s, not 30s, because Chrome/Edge throttle setInterval in
+// backgrounded tabs to roughly once per minute (and can suspend timers
+// entirely after several minutes of inactivity). Agents very plausibly
+// keep this chat tab open in the background while working in the CRM tab
+// in front — a 50s threshold against a throttled ~60s+ heartbeat produced
+// exactly the "logged in and using it, but shown offline" symptom. 90s
+// gives real headroom for that throttling while still flipping someone to
+// offline reasonably quickly after they actually close the tab.
+const ONLINE_THRESHOLD_MS = 90000;
 function isOnline(profile){
   if (!profile || !profile.last_seen) return false;
   return (Date.now() - new Date(profile.last_seen).getTime()) < ONLINE_THRESHOLD_MS;
@@ -499,6 +518,13 @@ async function init(){
   subscribeToAllMessagesForUnread();
   startHeartbeat();
   startPresenceRefresh();
+
+  // Ask once, right after login, rather than waiting for the first message
+  // to arrive — asking mid-notification feels like an interruption, and
+  // the browser will remember the choice either way.
+  if ('Notification' in window && Notification.permission === 'default'){
+    Notification.requestPermission();
+  }
 
   if (me.role !== 'admin'){
     startWorkingHoursWatch();
@@ -579,10 +605,12 @@ async function loadUnreadCounts(){
       .neq('sender_id', me.id);
     unreadCounts[id] = count || 0;
   }
+  updateTitleBadge();
 }
 
 async function markChannelRead(channelId){
   unreadCounts[channelId] = 0;
+  updateTitleBadge();
   const now = new Date().toISOString();
   lastReadMap[channelId] = now;
   renderSidebar();
@@ -593,15 +621,44 @@ async function markChannelRead(channelId){
     .eq('profile_id', me.id);
 }
 
+// Desktop notification for an incoming message — only fires for messages
+// that land somewhere the person isn't already looking (a different
+// channel than the one open, or this tab isn't focused at all), so it
+// doesn't pop for a conversation they're already reading live.
+function notifyNewMessage(msg){
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const sender = allProfiles.find(p => p.id === msg.sender_id);
+  const senderName = sender ? (sender.first_name + ' ' + sender.last_name) : 'Someone';
+  const label = channelLabel(msg.channel_id);
+  const notif = new Notification(senderName + ' — ' + label, {
+    body: (msg.body || '').slice(0, 120),
+    icon: 'gca_logo.png',
+    tag: 'gca-chat-' + msg.channel_id,
+  });
+  notif.onclick = () => {
+    window.focus();
+    const chan = channels.find(c => c.id === msg.channel_id);
+    if (chan){ openChannel(chan); }
+    else {
+      const dmProfileId = Object.keys(dmChannelByProfile).find(pid => dmChannelByProfile[pid] === msg.channel_id);
+      const person = dmProfileId ? allProfiles.find(p => p.id === dmProfileId) : null;
+      if (person) openOrCreateDM(person);
+    }
+    notif.close();
+  };
+}
+
 function subscribeToAllMessagesForUnread(){
   supabaseClient
     .channel('all-messages-unread')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
       const msg = payload.new;
       if (msg.sender_id === me.id) return;
-      if (msg.channel_id === activeChannelId) return;
+      if (msg.channel_id === activeChannelId && !document.hidden) return;
       unreadCounts[msg.channel_id] = (unreadCounts[msg.channel_id] || 0) + 1;
       renderSidebar();
+      updateTitleBadge();
+      notifyNewMessage(msg);
     })
     .subscribe();
 }
@@ -1056,7 +1113,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
   if (me){
     // Backdating last_seen (rather than just setting status) makes the
     // offline dot flip immediately for everyone else, instead of waiting
-    // for the ~50s staleness window to pass. Clearing current_session_id
+    // for the ~90s staleness window to pass. Clearing current_session_id
     // means the next login on any device won't get an unnecessary
     // "already logged in elsewhere" prompt.
     await supabaseClient.from('profiles')
@@ -1072,13 +1129,13 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 // reliably allow authenticated network calls during tab-close, so trying
 // to mark someone offline at that moment doesn't work in practice — the
 // heartbeat + staleness check above handles abrupt disconnects instead,
-// just with a short (~50s) delay rather than being instant.
+// just with a short (~90s) delay rather than being instant.
 
 // Heartbeat: keeps last_seen fresh every 30s while this tab is open. This
 // is what makes online/offline detection self-healing — if the tab is
 // killed abruptly (crash, force-quit) with no chance to run any cleanup
 // code, the heartbeat simply stops, and everyone else's staleness check
-// naturally shows this person as offline within about 50 seconds.
+// naturally shows this person as offline within about 90 seconds.
 function startHeartbeat(){
   setInterval(() => {
     if (!me) return;
@@ -1087,6 +1144,22 @@ function startHeartbeat(){
       .eq('id', me.id);
   }, 30000);
 }
+
+// If the tab was backgrounded long enough for the browser to fully suspend
+// its timers (Chrome does this after a few minutes), the 30s interval
+// above can go silent even though the tab is still open and the person is
+// still using the app — they'd just show as offline until they click back
+// in. Firing an immediate heartbeat the moment the tab becomes visible
+// again closes that gap in a couple seconds instead of waiting on the next
+// natural tick, and it flips the person back online for everyone else via
+// the realtime profile subscription almost instantly.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && me){
+    supabaseClient.from('profiles')
+      .update({ last_seen: new Date().toISOString() })
+      .eq('id', me.id);
+  }
+});
 
 // Re-render the sidebar periodically even with no new realtime event, so
 // someone who's gone stale (crashed tab, lost network) visibly flips to
